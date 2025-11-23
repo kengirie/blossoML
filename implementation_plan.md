@@ -4,6 +4,20 @@
 OCaml 5 (Eio) と Piaf を用いた Nostr Blossom サーバーの実装計画です。
 アーキテクチャとして「Functional Core, Imperative Shell」を採用し、並行処理には Eio を活用します。
 
+### Blossom Core
+#### [NEW] [bip340.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/bip340.ml)
+- Implement Schnorr signature verification using Ctypes and libsecp256k1.
+- Based on reference implementation from `andunieee/bip340`.
+- Use `Digestif` for SHA256 hashing.
+
+#### [NEW] [auth.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/auth.ml)
+- Implement NIP-98 authentication logic.
+- Use `Bip340.verify` for signature verification.
+- Parse and validate Authorization header.
+
+#### [MODIFY] [dune](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/dune)
+- Add dependencies: `ctypes`, `ctypes.foreign`, `digestif`, `yojson`, `base64`.
+
 ## 2. アーキテクチャ設計
 詳細な設計は `architecture_design.md` および `concurrency_design.md` を参照してください。
 
@@ -79,3 +93,5 @@ NIP-98 (HTTP Auth) に基づく認証を実装します。
 ## 5. テスト計画
 *   **Unit Test**: `Core` モジュールに対して Alcotest を用いて網羅的にテストします。
 *   **Integration Test**: 実際にサーバーを起動し、Piaf Client からリクエストを投げて動作を検証します。
+
+export DYLD_INSERT_LIBRARIES=/usr/local/lib/libsecp256k1.dylib && eval $(opam env) && dune runtest
