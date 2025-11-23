@@ -32,3 +32,5 @@ data/
 
 # Test artifacts
 test_phase1.sh
+test_phase2.sh
+test_upload.txt

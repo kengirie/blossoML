@@ -1,3 +1,4 @@
 (test
- (name test_core)
+ (name test_runner)
+ (modules test_runner test_integrity test_policy)
  (libraries ocaml-nostr-blossom.core alcotest))

@@ -24,6 +24,48 @@ let request_handler ~storage_dir { Server.Handler.request; _ } =
        | _ ->
            Printf.printf "Invalid path or hash\n%!";
            Response.of_string ~body:"Not found" `Not_found)
+  | `PUT, "/upload" ->
+      Printf.printf "Upload request\n%!";
+      let content_type = Headers.get request.headers "content-type" |> Option.value ~default:"application/octet-stream" in
+      let content_length =
+        Headers.get request.headers "content-length"
+        |> Option.map int_of_string
+        |> Option.value ~default:0
+      in
+
+      Printf.printf "Content-Type: %s, Content-Length: %d\n%!" content_type content_length;
+
+      (* ポリシーチェック *)
+      let policy = Policy.default_policy in
+      (match Policy.check_upload_policy ~policy ~size:content_length ~mime:content_type with
+       | Error e ->
+           Printf.printf "Policy check failed: %s\n%!" (match e with
+             | Domain.Storage_error msg -> msg
+             | Domain.Invalid_size s -> Printf.sprintf "Invalid size: %d" s
+             | _ -> "Unknown error");
+           Response.of_string ~body:"Upload rejected" `Bad_request
+       | Ok () ->
+           (* ストリーミング保存 + ハッシュ計算 *)
+           (match Local_storage.save_stream ~dir:storage_dir ~body:request.body with
+            | Error e ->
+                Printf.printf "Save failed: %s\n%!" (match e with
+                  | Domain.Storage_error msg -> msg
+                  | _ -> "Unknown error");
+                Response.of_string ~body:"Upload failed" `Internal_server_error
+            | Ok (hash, size) ->
+                Printf.printf "Upload successful: %s (%d bytes)\n%!" hash size;
+                let descriptor = {
+                  Domain.url = Printf.sprintf "http://localhost:8082/%s" hash;
+                  sha256 = hash;
+                  size = size;
+                  mime_type = content_type;
+                  uploaded = Int64.of_float (Unix.time ());
+                } in
+                let json = Printf.sprintf
+                  {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
+                  descriptor.url descriptor.sha256 descriptor.size descriptor.mime_type descriptor.uploaded
+                in
+                Response.of_string ~body:json `OK))
   | _ -> Response.of_string ~body:"Not found" `Not_found
 
 let start ~sw ~env ~port =
