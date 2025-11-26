@@ -49,50 +49,58 @@ let request_handler ~storage_dir { Server.Handler.request; _ } =
            error_response `Not_found "Invalid path or hash")
   | `PUT, "/upload" ->
       Printf.printf "Upload request\n%!";
-      let content_type = Headers.get request.headers "content-type" |> Option.value ~default:"application/octet-stream" in
-      let content_length =
-        Headers.get request.headers "content-length"
-        |> Option.map int_of_string
-        |> Option.value ~default:0
-      in
+      (match Headers.get request.headers "authorization" with
+       | None -> error_response `Unauthorized "Missing Authorization header"
+       | Some auth_header ->
+           let current_time = Int64.of_float (Unix.time ()) in
+           match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
+           | Error (Domain.Storage_error msg) -> error_response `Unauthorized msg
+           | Error _ -> error_response `Unauthorized "Authentication failed"
+           | Ok _pubkey ->
+               let content_type = Headers.get request.headers "content-type" |> Option.value ~default:"application/octet-stream" in
+               let content_length =
+                 Headers.get request.headers "content-length"
+                 |> Option.map int_of_string
+                 |> Option.value ~default:0
+               in
 
-      Printf.printf "Content-Type: %s, Content-Length: %d\n%!" content_type content_length;
+               Printf.printf "Content-Type: %s, Content-Length: %d\n%!" content_type content_length;
 
-      (* ポリシーチェック *)
-      let policy = Policy.default_policy in
-      (match Policy.check_upload_policy ~policy ~size:content_length ~mime:content_type with
-       | Error e ->
-           let msg = match e with
-             | Domain.Storage_error m -> m
-             | Domain.Invalid_size s -> Printf.sprintf "Invalid size: %d" s
-             | _ -> "Unknown error"
-           in
-           Printf.printf "Policy check failed: %s\n%!" msg;
-           error_response `Bad_request msg
-       | Ok () ->
-           (* ストリーミング保存 + ハッシュ計算 *)
-           (match Local_storage.save_stream ~dir:storage_dir ~body:request.body with
-            | Error e ->
-                let msg = match e with
-                  | Domain.Storage_error m -> m
-                  | _ -> "Unknown error"
-                in
-                Printf.printf "Save failed: %s\n%!" msg;
-                error_response `Internal_server_error msg
-            | Ok (hash, size) ->
-                Printf.printf "Upload successful: %s (%d bytes)\n%!" hash size;
-                let descriptor = {
-                  Domain.url = Printf.sprintf "http://localhost:8082/%s" hash;
-                  sha256 = hash;
-                  size = size;
-                  mime_type = content_type;
-                  uploaded = Int64.of_float (Unix.time ());
-                } in
-                let json = Printf.sprintf
-                  {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
-                  descriptor.url descriptor.sha256 descriptor.size descriptor.mime_type descriptor.uploaded
-                in
-                Response.of_string ~body:json `OK))
+               (* ポリシーチェック *)
+               let policy = Policy.default_policy in
+               (match Policy.check_upload_policy ~policy ~size:content_length ~mime:content_type with
+                | Error e ->
+                    let msg = match e with
+                      | Domain.Storage_error m -> m
+                      | Domain.Invalid_size s -> Printf.sprintf "Invalid size: %d" s
+                      | _ -> "Unknown error"
+                    in
+                    Printf.printf "Policy check failed: %s\n%!" msg;
+                    error_response `Bad_request msg
+                | Ok () ->
+                    (* ストリーミング保存 + ハッシュ計算 *)
+                    (match Local_storage.save_stream ~dir:storage_dir ~body:request.body with
+                     | Error e ->
+                         let msg = match e with
+                           | Domain.Storage_error m -> m
+                           | _ -> "Unknown error"
+                         in
+                         Printf.printf "Save failed: %s\n%!" msg;
+                         error_response `Internal_server_error msg
+                     | Ok (hash, size) ->
+                         Printf.printf "Upload successful: %s (%d bytes)\n%!" hash size;
+                         let descriptor = {
+                           Domain.url = Printf.sprintf "http://localhost:8082/%s" hash;
+                           sha256 = hash;
+                           size = size;
+                           mime_type = content_type;
+                           uploaded = Int64.of_float (Unix.time ());
+                         } in
+                         let json = Printf.sprintf
+                           {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
+                           descriptor.url descriptor.sha256 descriptor.size descriptor.mime_type descriptor.uploaded
+                         in
+                         Response.of_string ~body:json `OK)))
   | _ -> error_response `Not_found "Not found"
   in
   add_cors_headers response

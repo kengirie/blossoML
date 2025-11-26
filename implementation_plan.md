@@ -16,10 +16,47 @@ OCaml 5 (Eio) と Piaf を用いた Nostr Blossom サーバーの実装計画で
 - Parse and validate Authorization header.
 
 #### [MODIFY] [auth.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/auth.ml)
+- **HEAD Endpoint & Extensions (BUD-01):**
+    - Update path parsing to strip file extensions (e.g. `.png`, `.pdf`) before hash validation.
+    - Implement `HEAD` handler:
+        - Retrieve blob (or metadata).
+        - Return `200 OK` with `Content-Length` (and `Content-Type` if available).
+        - Body must be empty.
 - **Spec Compliance:**
     - Update `validate_auth` and `validate_event_structure` to accept optional `blob_sha256`.
     - Implement `x` tag validation: if `blob_sha256` is provided, ensure it exists in `x` tags.
     - Ensure `content` is not empty (basic check for human-readable string).
+
+### Database Design (Phase 3.7)
+#### Schema
+```sql
+CREATE TABLE blobs (
+    sha256 TEXT(64) PRIMARY KEY,
+    uploaded_at INTEGER NOT NULL,
+    uploader_pubkey TEXT(64),
+    status TEXT NOT NULL DEFAULT 'stored' CHECK (status IN ('stored','deleted','quarantined')),
+    remote_url TEXT,
+    mime_type TEXT,
+    size INTEGER
+);
+CREATE INDEX blobs_uploaded_at ON blobs(uploaded_at);
+CREATE INDEX blobs_uploader ON blobs(uploader_pubkey);
+```
+*Note: Added `mime_type` and `size` to support BUD-01 requirements.*
+
+#### [NEW] [lib/shell/blossom_db.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/shell/blossom_db.ml)
+- **Dependencies**: `caqti`, `caqti-driver-sqlite3`, `caqti-eio`.
+- **Functions**:
+    - `init : Eio.Fs.dir_ty Eio.Path.t -> (unit, error) result` (Initialize DB and tables)
+    - `save : sha256:string -> size:int -> mime_type:string -> uploader:string -> (unit, error) result`
+    - `get : sha256:string -> (metadata, error) result`
+    - `delete : sha256:string -> (unit, error) result` (Mark as deleted)
+
+#### [MODIFY] [lib/shell/dune](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/shell/dune)
+- Add `caqti`, `caqti-driver-sqlite3`, `caqti-eio`.
+
+#### [MODIFY] [lib/shell/local_storage.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/shell/local_storage.ml)
+- Integrate `Blossom_db` calls into `save_stream` and `get`.
 
 #### [MODIFY] [dune](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/dune)
 - Add dependencies: `ctypes`, `ctypes.foreign`, `digestif`, `yojson`, `base64`.
