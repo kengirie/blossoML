@@ -1,4 +1,13 @@
 (library
  (name blossom_shell)
  (public_name ocaml-nostr-blossom.shell)
- (libraries ocaml-nostr-blossom.core piaf eio eio_main digestif))
+ (libraries
+  ocaml-nostr-blossom.core
+  piaf
+  eio
+  eio_main
+  digestif
+  caqti
+  caqti-driver-sqlite3
+  caqti-eio
+  caqti-eio.unix))

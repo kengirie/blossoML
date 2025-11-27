@@ -17,11 +17,14 @@ OCaml 5 (Eio) と Piaf を用いた Nostr Blossom サーバーの実装計画で
 
 #### [MODIFY] [auth.ml](file:///Users/iriekengo/ocaml-nostr-blossom/ocaml-nostr-blossom/lib/core/auth.ml)
 - **HEAD Endpoint & Extensions (BUD-01):**
-    - Update path parsing to strip file extensions (e.g. `.png`, `.pdf`) before hash validation.
-    - Implement `HEAD` handler:
-        - Retrieve blob (or metadata).
-        - Return `200 OK` with `Content-Length` (and `Content-Type` if available).
-        - Body must be empty.
+  - [x] **Phase 3.7: MIME Type Support & Extensions (BUD-01)**
+    - [x] Design metadata storage (SQLite with `caqti-eio`)
+    - [x] Implement `Blossom_db` module
+    - [x] Update `Local_storage` to use `Blossom_db`
+    - [x] Update `Http_server` to return correct `Content-Type`
+    - [x] Support optional file extensions in URL
+- [x] **Phase 3.8: HEAD Endpoint (BUD-01)**
+    - [x] Implement `HEAD` method using metadata
 - **Spec Compliance:**
     - Update `validate_auth` and `validate_event_structure` to accept optional `blob_sha256`.
     - Implement `x` tag validation: if `blob_sha256` is provided, ensure it exists in `x` tags.
