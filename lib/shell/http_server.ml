@@ -23,8 +23,8 @@ let log_response ~request response =
     |> List.map (fun (k, v) -> Printf.sprintf "%s: %s" k v)
     |> String.concat "; "
   in
-  Printf.printf
-    "Response: %s %s -> %s [%s]\n%!"
+  Eio.traceln
+    "Response: %s %s -> %s [%s]"
     (request |> Request.meth |> Method.to_string)
     (Request.target request)
     status
@@ -44,12 +44,12 @@ let error_response status message =
   Response.of_string ~headers ~body:message status
 
 let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
-  Printf.printf "Request: %s %s\n%!" (Method.to_string request.meth) request.target;
+  Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
   let response = match request.meth, request.target with
   | `OPTIONS, _ -> handle_cors_preflight ()
   | `GET, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
-      Printf.printf "Path parts: [%s]\n%!" (String.concat "; " path_parts);
+      Eio.traceln "Path parts: [%s]" (String.concat "; " path_parts);
       (match path_parts with
        | [hash_with_ext] ->
            (* 拡張子を取り除く *)
@@ -121,10 +121,10 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
                            | Domain.Storage_error m -> m
                            | _ -> "Unknown error"
                          in
-                         Printf.printf "Save failed: %s\n%!" msg;
+                         Eio.traceln "Save failed: %s" msg;
                          error_response `Internal_server_error msg
                      | Ok (hash, size) ->
-                         Printf.printf "Upload successful: %s (%d bytes)\n%!" hash size;
+                         Eio.traceln "Upload successful: %s (%d bytes)" hash size;
                          let descriptor = {
                            Domain.url = Printf.sprintf "http://localhost:8082/%s" hash;
                            sha256 = hash;
@@ -136,7 +136,7 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
                            {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
                            descriptor.url descriptor.sha256 descriptor.size descriptor.mime_type descriptor.uploaded
                          in
-                         Printf.printf "Upload response: %s\n%!" json;
+                         Eio.traceln "Upload response: %s" json;
                          Response.of_string ~body:json `OK)))
   | _ -> error_response `Not_found "Not found"
   in
