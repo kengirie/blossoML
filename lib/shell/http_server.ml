@@ -43,7 +43,7 @@ let error_response status message =
   let headers = Headers.of_list [("X-Reason", message)] in
   Response.of_string ~headers ~body:message status
 
-let request_handler ~dir ~db { Server.Handler.request; _ } =
+let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
   Printf.printf "Request: %s %s\n%!" (Method.to_string request.meth) request.target;
   let response = match request.meth, request.target with
   | `OPTIONS, _ -> handle_cors_preflight ()
@@ -91,7 +91,7 @@ let request_handler ~dir ~db { Server.Handler.request; _ } =
       (match Headers.get request.headers "authorization" with
        | None -> error_response `Unauthorized "Missing Authorization header"
        | Some auth_header ->
-           let current_time = Int64.of_float (Unix.time ()) in
+           let current_time = Int64.of_float (Eio.Time.now clock) in
            match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
            | Error (Domain.Storage_error msg) -> error_response `Unauthorized msg
            | Error _ -> error_response `Unauthorized "Authentication failed"
@@ -130,7 +130,7 @@ let request_handler ~dir ~db { Server.Handler.request; _ } =
                            sha256 = hash;
                            size = size;
                            mime_type = mime_type;
-                           uploaded = Int64.of_float (Unix.time ());
+                           uploaded = Int64.of_float (Eio.Time.now clock);
                          } in
                          let json = Printf.sprintf
                            {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
@@ -144,9 +144,9 @@ let request_handler ~dir ~db { Server.Handler.request; _ } =
   log_response ~request response;
   response
 
-let start ~sw ~env ~port ~dir ~db =
+let start ~sw ~env ~port ~clock ~dir ~db =
   let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
   let config = Server.Config.create address in
-  let server = Server.create ~config (request_handler ~dir ~db) in
+  let server = Server.create ~config (request_handler ~clock ~dir ~db) in
   let _ = Server.Command.start ~sw env server in
   ()
