@@ -1,19 +1,7 @@
 open Piaf
 open Blossom_core
 
-let add_cors_headers response =
-  let headers = Response.headers response in
-  let headers =
-    headers
-    |> fun h -> Headers.remove h "access-control-allow-origin"
-    |> fun h -> Headers.add h "access-control-allow-origin" "*"
-  in
-  Response.create
-    ~version:response.version
-    ~headers
-    ~body:response.body
-    response.status
-
+(** ログ出力（副作用） *)
 let log_response ~request response =
   let status = Response.status response |> Piaf.Status.to_string in
   let headers =
@@ -30,90 +18,77 @@ let log_response ~request response =
     status
     headers
 
-let handle_cors_preflight () =
-  let headers = Headers.of_list [
-    ("Access-Control-Allow-Origin", "*");
-    ("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS");
-    ("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Length, *");
-    ("Access-Control-Max-Age", "86400");
-  ] in
-  Response.create ~headers `No_content
-
-let error_response status message =
-  let headers = Headers.of_list [("X-Reason", message)] in
-  Response.of_string ~headers ~body:message status
+(** Domain.errorをHttp_response.response_kindに変換するヘルパー *)
+let error_to_response_kind = function
+  | Domain.Blob_not_found _ -> Http_response.Error_not_found "Blob not found"
+  | Domain.Storage_error msg -> Http_response.Error_internal msg
+  | Domain.Invalid_size s -> Http_response.Error_bad_request (Printf.sprintf "Invalid size: %d" s)
+  | Domain.Invalid_hash h -> Http_response.Error_bad_request (Printf.sprintf "Invalid hash: %s" h)
 
 let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
-  let response = match request.meth, request.target with
-  | `OPTIONS, _ -> handle_cors_preflight ()
+
+  (* レスポンス種別を決定 *)
+  let response_kind = match request.meth, request.target with
+  | `OPTIONS, _ ->
+      Http_response.Cors_preflight
+
   | `GET, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
       Eio.traceln "Path parts: [%s]" (String.concat "; " path_parts);
       (match path_parts with
        | [hash_with_ext] ->
-           (* 拡張子を取り除く *)
            let hash = try Filename.remove_extension hash_with_ext with _ -> hash_with_ext in
            if not (Integrity.validate_hash hash) then
-             error_response `Not_found "Invalid path or hash"
+             Http_response.Error_not_found "Invalid path or hash"
            else
              (match Local_storage.get ~dir ~db ~sha256:hash with
               | Ok (data, metadata) ->
-                  let headers = Headers.of_list [
-                    ("Content-Type", metadata.mime_type);
-                    ("Content-Length", string_of_int metadata.size);
-                  ] in
-                  Response.create ~headers ~body:(Body.of_string data) `OK
-              | Error (Domain.Blob_not_found _) -> error_response `Not_found "Blob not found"
-              | Error (Domain.Storage_error msg) -> error_response `Internal_server_error msg
-              | Error _ -> error_response `Internal_server_error "Internal error")
-       | _ -> error_response `Not_found "Invalid path")
+                  Http_response.Success_blob {
+                    data;
+                    mime_type = metadata.mime_type;
+                    size = metadata.size;
+                  }
+              | Error e -> error_to_response_kind e)
+       | _ -> Http_response.Error_not_found "Invalid path")
+
   | `HEAD, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
       (match path_parts with
        | [hash_with_ext] ->
            let hash = try Filename.remove_extension hash_with_ext with _ -> hash_with_ext in
            if not (Integrity.validate_hash hash) then
-             error_response `Not_found "Invalid path or hash"
+             Http_response.Error_not_found "Invalid path or hash"
            else
              (match Local_storage.get ~dir ~db ~sha256:hash with
               | Ok (_, metadata) ->
-                  let headers = Headers.of_list [
-                    ("Content-Type", metadata.mime_type);
-                    ("Content-Length", string_of_int metadata.size);
-                  ] in
-                  Response.create ~headers `OK
-              | Error (Domain.Blob_not_found _) -> error_response `Not_found "Blob not found"
-              | Error (Domain.Storage_error msg) -> error_response `Internal_server_error msg
-              | Error _ -> error_response `Internal_server_error "Internal error")
-       | _ -> error_response `Not_found "Invalid path")
+                  Http_response.Success_metadata {
+                    mime_type = metadata.mime_type;
+                    size = metadata.size;
+                  }
+              | Error e -> error_to_response_kind e)
+       | _ -> Http_response.Error_not_found "Invalid path")
+
   | `PUT, "/upload" ->
       (match Headers.get request.headers "authorization" with
-       | None -> error_response `Unauthorized "Missing Authorization header"
+       | None -> Http_response.Error_unauthorized "Missing Authorization header"
        | Some auth_header ->
            let current_time = Int64.of_float (Eio.Time.now clock) in
            match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
-           | Error (Domain.Storage_error msg) -> error_response `Unauthorized msg
-           | Error _ -> error_response `Unauthorized "Authentication failed"
+           | Error (Domain.Storage_error msg) -> Http_response.Error_unauthorized msg
+           | Error _ -> Http_response.Error_unauthorized "Authentication failed"
            | Ok pubkey ->
-               (* Content-Type を取得 *)
-               let mime_type = Headers.get request.headers "content-type" |> Option.value ~default:"application/octet-stream" in
+               let mime_type = Headers.get request.headers "content-type"
+                 |> Option.value ~default:"application/octet-stream" in
                let content_length =
                  Headers.get request.headers "content-length"
                  |> Option.map int_of_string
                  |> Option.value ~default:0
                in
 
-               (* ポリシーチェック *)
                let policy = Policy.default_policy in
                (match Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type with
-                | Error e ->
-                    let msg = match e with
-                      | Domain.Storage_error m -> m
-                      | Domain.Invalid_size s -> Printf.sprintf "Invalid size: %d" s
-                      | _ -> "Unknown error"
-                    in
-                    error_response `Bad_request msg
+                | Error e -> error_to_response_kind e
                 | Ok () ->
                     (match Local_storage.save_stream ~dir ~db ~body:request.body ~mime_type ~uploader:pubkey with
                      | Error e ->
@@ -122,7 +97,7 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
                            | _ -> "Unknown error"
                          in
                          Eio.traceln "Save failed: %s" msg;
-                         error_response `Internal_server_error msg
+                         Http_response.Error_internal msg
                      | Ok (hash, size) ->
                          Eio.traceln "Upload successful: %s (%d bytes)" hash size;
                          let descriptor = {
@@ -132,15 +107,15 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
                            mime_type = mime_type;
                            uploaded = Int64.of_float (Eio.Time.now clock);
                          } in
-                         let json = Printf.sprintf
-                           {|{"url":"%s","sha256":"%s","size":%d,"type":"%s","uploaded":%Ld}|}
-                           descriptor.url descriptor.sha256 descriptor.size descriptor.mime_type descriptor.uploaded
-                         in
-                         Eio.traceln "Upload response: %s" json;
-                         Response.of_string ~body:json `OK)))
-  | _ -> error_response `Not_found "Not found"
+                         Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
+                         Http_response.Success_upload descriptor)))
+
+  | _ -> Http_response.Error_not_found "Not found"
   in
-  let response = add_cors_headers response in
+
+  (* レスポンスを生成し、CORSヘッダーを追加 *)
+  let response = Http_response.create response_kind in
+  let response = Http_response.add_cors_headers response in
   log_response ~request response;
   response
 

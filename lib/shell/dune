@@ -10,4 +10,5 @@
   caqti
   caqti-driver-sqlite3
   caqti-eio
-  caqti-eio.unix))
+  caqti-eio.unix
+  yojson))
