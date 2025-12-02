@@ -144,9 +144,25 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
   log_response ~request response;
   response
 
-let start ~sw ~env ~port ~clock ~dir ~db =
+let start ~sw ~env ~port ~clock ~dir ~db ?cert ?key () =
   let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
-  let config = Server.Config.create address in
+
+  let https =
+    match cert, key with
+    | Some cert_path, Some key_path ->
+        Some (Server.Config.HTTPS.create
+          ~address
+          (Cert.Filepath cert_path, Cert.Filepath key_path))
+    | _ -> None
+  in
+
+  let config =
+    Server.Config.create
+      ?https
+      ~max_http_version:(if Option.is_some https then Versions.HTTP.HTTP_2 else Versions.HTTP.HTTP_1_1)
+      address
+  in
+
   let server = Server.create ~config (request_handler ~clock ~dir ~db) in
   let _ = Server.Command.start ~sw env server in
   ()

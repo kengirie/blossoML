@@ -37,3 +37,6 @@ test_phase3.sh
 test_*.sh
 test_upload.txt
 *.png
+
+
+*.pem
