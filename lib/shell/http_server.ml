@@ -79,12 +79,14 @@ let request_handler ~clock ~dir ~db { Server.Handler.request; _ } =
            | Error _ -> Http_response.Error_unauthorized "Authentication failed"
            | Ok pubkey ->
                (* Content-Type -> X-Content-Type -> default の優先順位で MIME type を取得 *)
+               (* 空文字列の場合もデフォルト値にフォールバック *)
                let mime_type =
                  match Headers.get request.headers "content-type" with
-                 | Some ct -> ct
-                 | None ->
-                     Headers.get request.headers "x-content-type"
-                     |> Option.value ~default:"application/octet-stream"
+                 | Some ct when String.length ct > 0 -> ct
+                 | _ ->
+                     match Headers.get request.headers "x-content-type" with
+                     | Some xct when String.length xct > 0 -> xct
+                     | _ -> "application/octet-stream"
                in
                let content_length =
                  Headers.get request.headers "content-length"

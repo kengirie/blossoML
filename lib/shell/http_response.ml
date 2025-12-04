@@ -26,13 +26,29 @@ type response_kind =
   | Error_internal of string
     (** 500 Internal Server Error *)
 
-(** CORSヘッダーをレスポンスに追加する純粋関数 *)
+(** CORSヘッダーをレスポンスに追加する純粋関数
+
+    @koa/cors 相当の全面適用:
+    - Access-Control-Allow-Origin: *
+    - Access-Control-Allow-Methods: * (全メソッド許可)
+    - Access-Control-Allow-Headers: Authorization, Content-Type, Content-Length, *
+    - Access-Control-Expose-Headers: * (全ヘッダー公開)
+    - Access-Control-Max-Age: 86400 (プリフライトキャッシュ24時間)
+*)
 let add_cors_headers response =
   let headers = Response.headers response in
   let headers =
     headers
     |> fun h -> Headers.remove h "access-control-allow-origin"
-    |> fun h -> Headers.add h "access-control-allow-origin" "*"
+    |> fun h -> Headers.remove h "access-control-allow-methods"
+    |> fun h -> Headers.remove h "access-control-allow-headers"
+    |> fun h -> Headers.remove h "access-control-expose-headers"
+    |> fun h -> Headers.remove h "access-control-max-age"
+    |> fun h -> Headers.add h "Access-Control-Allow-Origin" "*"
+    |> fun h -> Headers.add h "Access-Control-Allow-Methods" "*"
+    |> fun h -> Headers.add h "Access-Control-Allow-Headers" "Authorization, Content-Type, Content-Length, *"
+    |> fun h -> Headers.add h "Access-Control-Expose-Headers" "*"
+    |> fun h -> Headers.add h "Access-Control-Max-Age" "86400"
   in
   Response.create
     ~version:response.version
@@ -78,8 +94,9 @@ let create = function
   | Cors_preflight ->
       let headers = Headers.of_list [
         ("Access-Control-Allow-Origin", "*");
-        ("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS");
+        ("Access-Control-Allow-Methods", "*");
         ("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Length, *");
+        ("Access-Control-Expose-Headers", "*");
         ("Access-Control-Max-Age", "86400");
       ] in
       Response.create ~headers `No_content

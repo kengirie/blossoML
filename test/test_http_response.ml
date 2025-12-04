@@ -48,8 +48,9 @@ let test_cors_preflight () =
   let response = Http_response.create Cors_preflight in
   check int "Status code" 204 (get_status response);
   check (option string) "CORS origin" (Some "*") (get_header response "access-control-allow-origin");
-  check (option string) "CORS methods" (Some "GET, HEAD, PUT, DELETE, OPTIONS") (get_header response "access-control-allow-methods");
+  check (option string) "CORS methods" (Some "*") (get_header response "access-control-allow-methods");
   check (option string) "CORS headers" (Some "Authorization, Content-Type, Content-Length, *") (get_header response "access-control-allow-headers");
+  check (option string) "CORS expose-headers" (Some "*") (get_header response "access-control-expose-headers");
   check (option string) "CORS max-age" (Some "86400") (get_header response "access-control-max-age")
 
 (* Error_not_found レスポンステスト *)
@@ -80,7 +81,11 @@ let test_error_internal () =
 let test_add_cors_headers () =
   let original = Response.of_string ~body:"test" `OK in
   let with_cors = Http_response.add_cors_headers original in
-  check (option string) "CORS header added" (Some "*") (get_header with_cors "access-control-allow-origin");
+  check (option string) "CORS origin" (Some "*") (get_header with_cors "access-control-allow-origin");
+  check (option string) "CORS methods" (Some "*") (get_header with_cors "access-control-allow-methods");
+  check (option string) "CORS headers" (Some "Authorization, Content-Type, Content-Length, *") (get_header with_cors "access-control-allow-headers");
+  check (option string) "CORS expose-headers" (Some "*") (get_header with_cors "access-control-expose-headers");
+  check (option string) "CORS max-age" (Some "86400") (get_header with_cors "access-control-max-age");
   check int "Status unchanged" 200 (get_status with_cors)
 
 (* descriptor_to_json テスト *)
