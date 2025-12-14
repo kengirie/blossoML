@@ -128,10 +128,14 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
 
   let unlink dir ~path =
     let full_path = Eio.Path.(dir / path) in
-    Eio.Path.unlink full_path
+    catch_eio_error ~path (fun () ->
+      Eio.Path.unlink full_path
+    )
 
   let rename dir ~src ~dst =
     let src_path = Eio.Path.(dir / src) in
     let dst_path = Eio.Path.(dir / dst) in
-    Eio.Path.rename src_path dst_path
+    catch_eio_error ~path:src (fun () ->
+      Eio.Path.rename src_path dst_path
+    )
 end

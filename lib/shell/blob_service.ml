@@ -62,7 +62,7 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
         | Ok () -> Ok (result.sha256, result.size, final_mime_type)
         | Error e ->
             (* DB保存失敗時はファイルも削除 *)
-            (try Storage.unlink storage ~path:result.sha256 with _ -> ());
+            let _ = Storage.unlink storage ~path:result.sha256 in
             Error e
 
   let get ~sw ~storage ~db ~sha256 =

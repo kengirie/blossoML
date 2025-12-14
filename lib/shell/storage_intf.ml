@@ -38,8 +38,8 @@ module type S = sig
   val stat : t -> path:string -> (int, Domain.error) result
 
   (** ファイルを削除する *)
-  val unlink : t -> path:string -> unit
+  val unlink : t -> path:string -> (unit, Domain.error) result
 
   (** ファイルをリネームする *)
-  val rename : t -> src:string -> dst:string -> unit
+  val rename : t -> src:string -> dst:string -> (unit, Domain.error) result
 end
