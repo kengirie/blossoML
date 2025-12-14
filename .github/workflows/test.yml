@@ -22,7 +22,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgmp-dev libffi-dev pkg-config libsqlite3-dev
+          sudo apt-get install -y libgmp-dev libffi-dev pkg-config libsqlite3-dev libsecp256k1-dev
 
       - name: Add opam repositories
         run: |
@@ -35,4 +35,6 @@ jobs:
         run: opam exec -- dune build
 
       - name: Run tests
-        run: opam exec -- dune test
+        run: |
+          export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+          opam exec -- dune test
