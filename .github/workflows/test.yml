@@ -17,7 +17,7 @@ jobs:
       - name: Set up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5.2.x
+          ocaml-compiler: "5.2"
 
       - name: Install system dependencies
         run: |
@@ -26,7 +26,7 @@ jobs:
 
       - name: Add opam repositories
         run: |
-          opam repo add --all --set-default git+https://github.com/ocaml/opam-repository.git
+          opam repo add --all --set-default default git+https://github.com/ocaml/opam-repository.git
 
       - name: Install dependencies
         run: opam install . --deps-only --with-test -y
