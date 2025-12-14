@@ -34,7 +34,15 @@ jobs:
       - name: Build
         run: opam exec -- dune build
 
+      - name: Find libsecp256k1
+        run: |
+          echo "Searching for libsecp256k1..."
+          find /usr -name "libsecp256k1*" 2>/dev/null || true
+          dpkg -L libsecp256k1-dev 2>/dev/null || true
+
       - name: Run tests
         run: |
-          export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libsecp256k1.so.2
+          SECP_LIB=$(find /usr -name "libsecp256k1.so*" -type f 2>/dev/null | head -1)
+          echo "Using library: $SECP_LIB"
+          export LD_PRELOAD=$SECP_LIB
           opam exec -- dune test
