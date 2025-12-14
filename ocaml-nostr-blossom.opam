@@ -10,8 +10,8 @@ homepage: "https://github.com/username/reponame"
 doc: "https://url/to/documentation"
 bug-reports: "https://github.com/username/reponame/issues"
 depends: [
-  "dune" {>= "3.20"}
   "ocaml"
+  "dune" {>= "3.20"}
   "piaf"
   "eio"
   "eio_main"
@@ -20,6 +20,14 @@ depends: [
   "alcotest"
   "conan"
   "conan-database"
+  "yojson"
+  "base64"
+  "ctypes"
+  "ctypes-foreign"
+  "secp256k1-internal"
+  "caqti"
+  "caqti-driver-sqlite3"
+  "caqti-eio"
   "odoc" {with-doc}
 ]
 build: [

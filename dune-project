@@ -19,7 +19,25 @@
  (name ocaml-nostr-blossom)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml piaf eio eio_main digestif checkseum alcotest conan conan-database)
+ (depends
+  ocaml
+  dune
+  piaf
+  eio
+  eio_main
+  digestif
+  checkseum
+  alcotest
+  conan
+  conan-database
+  yojson
+  base64
+  ctypes
+  ctypes-foreign
+  secp256k1-internal
+  caqti
+  caqti-driver-sqlite3
+  caqti-eio)
  (tags
   ("add topics" "to describe" your project)))
 
