@@ -29,6 +29,22 @@ let find_tag event tag_name =
     | _ -> None
   with Not_found -> None
 
+(* Helper to extract all values for a tag name *)
+let find_all_tags event tag_name =
+  event.tags
+  |> List.filter_map (fun t ->
+      match t with
+      | name :: value :: _ when name = tag_name -> Some value
+      | _ -> None)
+
+(* Validate that x tag contains the specified hash *)
+let validate_x_tag event ~sha256 =
+  let x_tags = find_all_tags event "x" in
+  if List.mem sha256 x_tags then
+    Ok ()
+  else
+    Error (Domain.Storage_error "Authorization event does not contain matching x tag for this blob")
+
 let parse_auth_header header =
   try
     (* Format: "Nostr <base64-encoded-json>" *)
@@ -101,3 +117,17 @@ let validate_auth ~header ~action ~current_time =
           match verify_signature event with
           | Error e -> Error e
           | Ok () -> Ok event.pubkey
+
+let validate_delete_auth ~header ~sha256 ~current_time =
+  match parse_auth_header header with
+  | Error e -> Error e
+  | Ok event ->
+      match validate_event_structure event ~action:Delete ~current_time with
+      | Error e -> Error e
+      | Ok () ->
+          match validate_x_tag event ~sha256 with
+          | Error e -> Error e
+          | Ok () ->
+              match verify_signature event with
+              | Error e -> Error e
+              | Ok () -> Ok event.pubkey

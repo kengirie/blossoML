@@ -49,6 +49,20 @@ module Db = struct
       FROM blobs
       WHERE sha256 = $1 AND status = 'stored'
     |sql}
+
+  let get_uploader =
+    (string ->? option string)
+    @@ {sql|
+      SELECT uploader_pubkey
+      FROM blobs
+      WHERE sha256 = $1 AND status = 'stored'
+    |sql}
+
+  let delete_blob =
+    (string ->. unit)
+    @@ {sql|
+      UPDATE blobs SET status = 'deleted' WHERE sha256 = $1
+    |sql}
 end
 
 type t = (Caqti_eio.connection, Caqti_error.t) Caqti_eio.Pool.t
@@ -99,9 +113,32 @@ let get (pool : t) ~sha256 =
   | Ok None -> Error (Domain.Blob_not_found sha256)
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
+let get_uploader (pool : t) ~sha256 =
+  let result =
+    Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
+      C.find_opt Db.get_uploader sha256
+    ) pool
+  in
+  match result with
+  | Ok (Some pubkey) -> Ok pubkey
+  | Ok None -> Error (Domain.Blob_not_found sha256)
+  | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
+
+let delete (pool : t) ~sha256 =
+  let result =
+    Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
+      C.exec Db.delete_blob sha256
+    ) pool
+  in
+  match result with
+  | Ok () -> Ok ()
+  | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
+
 (** Db_intf.S を満たすモジュール *)
 module Impl : Db_intf.S with type t = t = struct
   type nonrec t = t
   let save = save
   let get = get
+  let get_uploader = get_uploader
+  let delete = delete
 end

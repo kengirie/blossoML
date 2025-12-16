@@ -21,4 +21,16 @@ module type S = sig
     t ->
     sha256:string ->
     (Domain.blob_descriptor, Domain.error) result
+
+  (** Blobのアップローダーpubkeyを取得する *)
+  val get_uploader :
+    t ->
+    sha256:string ->
+    (string option, Domain.error) result
+
+  (** Blobを論理削除する（status = 'deleted' に更新） *)
+  val delete :
+    t ->
+    sha256:string ->
+    (unit, Domain.error) result
 end

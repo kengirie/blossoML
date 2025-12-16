@@ -30,6 +30,14 @@ module type S = sig
     db:db ->
     sha256:string ->
     (Domain.blob_descriptor, Domain.error) result
+
+  (** Blobを削除する（所有者検証 → DB論理削除 → ファイル物理削除） *)
+  val delete :
+    storage:storage ->
+    db:db ->
+    sha256:string ->
+    pubkey:string ->
+    (unit, Domain.error) result
 end
 
 (** Blob_serviceファンクタ *)
@@ -109,4 +117,22 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
          | Ok false -> Error (Domain.Blob_not_found sha256)
          | Ok true -> Ok metadata)
     | Error e -> Error e
+
+  let delete ~storage ~db ~sha256 ~pubkey =
+    (* 1. アップローダー情報を取得し所有者検証 *)
+    match Db.get_uploader db ~sha256 with
+    | Error e -> Error e
+    | Ok uploader_opt ->
+        (* アップローダーが記録されていて、リクエスト者と異なる場合は拒否 *)
+        (match uploader_opt with
+         | Some uploader when uploader <> pubkey ->
+             Error (Domain.Storage_error "Not authorized to delete this blob")
+         | _ ->
+             (* 2. DB論理削除 *)
+             match Db.delete db ~sha256 with
+             | Error e -> Error e
+             | Ok () ->
+                 (* 3. ファイル物理削除（エラーは無視してDBの状態を優先） *)
+                 let _ = Storage.unlink storage ~path:sha256 in
+                 Ok ())
 end

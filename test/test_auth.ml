@@ -30,6 +30,27 @@ let event2_json = {|{
   "sig": "e402ade78e1714d40cd6bd3091bc5f4ada8e904e90301b5a2b9b5f0b6e95ce908d4f22b15e9fb86f8268a2131f8adbb3d1f0e7e7afd1ab0f4f08acb15822a999"
 }|}
 
+(* Delete event from BUD-02 spec *)
+let delete_event_json = {|{
+  "id": "a92868bd8ea740706d931f5d205308eaa0e6698e5f8026a990e78ee34ce47fe8",
+  "pubkey": "ae0063dd2c81ec469f2291ac029a19f39268bfc40aea7ab4136d7a858c3a06de",
+  "kind": 24242,
+  "content": "Delete bitcoin.pdf",
+  "created_at": 1708774469,
+  "tags": [
+    ["t", "delete"],
+    ["x", "b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553"],
+    ["expiration", "1708858680"]
+  ],
+  "sig": "2ba9af680505583e3eb289a1624a08661a2f6fa2e5566a5ee0036333d517f965e0ffba7f5f7a57c2de37e00a2e85fd7999076468e52bdbcfad8abb76b37a94b0"
+}|}
+
+(* Valid time window for delete event: created_at < current_time < expiration *)
+(* created_at: 1708774469 *)
+(* expiration: 1708858680 *)
+let delete_valid_time = 1708800000L
+let delete_target_sha256 = "b1674191a88ec5cdd733e4240a81803105dc412d6c6708d53ab94fc248f4f553"
+
 (* Valid time window: created_at < current_time < expiration *)
 (* created_at: 1708771927 *)
 (* expiration: 1708857340 *)
@@ -85,6 +106,41 @@ let test_validate_auth_future_created_at () =
   | Ok _ -> fail "Should have failed with future created_at"
   | Error _ -> ()
 
+(* Delete authorization tests *)
+let test_validate_delete_auth_valid () =
+  let encoded = Base64.encode_exn delete_event_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.validate_delete_auth ~header ~sha256:delete_target_sha256 ~current_time:delete_valid_time with
+  | Ok pubkey ->
+      check string "pubkey matches" "ae0063dd2c81ec469f2291ac029a19f39268bfc40aea7ab4136d7a858c3a06de" pubkey
+  | Error msg -> fail (Printf.sprintf "Delete validation failed: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+
+let test_validate_delete_auth_wrong_hash () =
+  let encoded = Base64.encode_exn delete_event_json in
+  let header = "Nostr " ^ encoded in
+  let wrong_sha256 = "0000000000000000000000000000000000000000000000000000000000000000" in
+  match Auth.validate_delete_auth ~header ~sha256:wrong_sha256 ~current_time:delete_valid_time with
+  | Ok _ -> fail "Should have failed with wrong sha256"
+  | Error (Domain.Storage_error msg) ->
+      check bool "error message mentions x tag" true (String.length msg > 0)
+  | Error _ -> fail "Expected Storage_error"
+
+let test_validate_delete_auth_expired () =
+  let encoded = Base64.encode_exn delete_event_json in
+  let header = "Nostr " ^ encoded in
+  let expired_time = 1708900000L in (* After expiration *)
+  match Auth.validate_delete_auth ~header ~sha256:delete_target_sha256 ~current_time:expired_time with
+  | Ok _ -> fail "Should have failed with expired event"
+  | Error _ -> ()
+
+let test_validate_delete_auth_wrong_action () =
+  (* Use a get event and try to validate as delete *)
+  let encoded = Base64.encode_exn event1_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.validate_delete_auth ~header ~sha256:delete_target_sha256 ~current_time:valid_time with
+  | Ok _ -> fail "Should have failed with wrong action (get instead of delete)"
+  | Error _ -> ()
+
 let tests = [
   test_case "parse_auth_header valid" `Quick test_parse_auth_header_valid;
   test_case "validate_auth valid event 1" `Quick test_validate_auth_valid_event1;
@@ -92,4 +148,8 @@ let tests = [
   test_case "validate_auth wrong action" `Quick test_validate_auth_wrong_action;
   test_case "validate_auth expired" `Quick test_validate_auth_expired;
   test_case "validate_auth future created_at" `Quick test_validate_auth_future_created_at;
+  test_case "validate_delete_auth valid" `Quick test_validate_delete_auth_valid;
+  test_case "validate_delete_auth wrong hash" `Quick test_validate_delete_auth_wrong_hash;
+  test_case "validate_delete_auth expired" `Quick test_validate_delete_auth_expired;
+  test_case "validate_delete_auth wrong action" `Quick test_validate_delete_auth_wrong_action;
 ]

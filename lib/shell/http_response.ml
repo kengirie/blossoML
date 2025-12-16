@@ -17,12 +17,16 @@ type response_kind =
     (** Blobメタデータの取得成功（HEADリクエスト用） *)
   | Success_upload of Domain.blob_descriptor
     (** Blobアップロード成功 *)
+  | Success_delete
+    (** Blob削除成功 *)
   | Cors_preflight
     (** CORSプリフライトレスポンス *)
   | Error_not_found of string
     (** 404 Not Found *)
   | Error_unauthorized of string
     (** 401 Unauthorized *)
+  | Error_forbidden of string
+    (** 403 Forbidden *)
   | Error_bad_request of string
     (** 400 Bad Request *)
   | Error_internal of string
@@ -89,6 +93,10 @@ let create = function
       let headers = Headers.of_list cors_headers in
       Response.create ~headers ~body:(Body.of_string json) `OK
 
+  | Success_delete ->
+      let headers = Headers.of_list cors_headers in
+      Response.create ~headers `No_content
+
   | Cors_preflight ->
       let headers = Headers.of_list cors_headers in
       Response.create ~headers `No_content
@@ -100,6 +108,10 @@ let create = function
   | Error_unauthorized message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Unauthorized
+
+  | Error_forbidden message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
+      Response.create ~headers ~body:(Body.of_string message) `Forbidden
 
   | Error_bad_request message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in

@@ -121,6 +121,37 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
                          Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
                          Http_response.Success_upload descriptor)))
 
+  | `DELETE, path ->
+      let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
+      (match path_parts with
+       | [hash_with_ext] ->
+           let hash = try Filename.remove_extension hash_with_ext with _ -> hash_with_ext in
+           if not (Integrity.validate_hash hash) then
+             Http_response.Error_not_found "Invalid path or hash"
+           else
+             (match Headers.get request.headers "authorization" with
+              | None -> Http_response.Error_unauthorized "Missing Authorization header"
+              | Some auth_header ->
+                  let current_time = Int64.of_float (Eio.Time.now clock) in
+                  match Auth.validate_delete_auth ~header:auth_header ~sha256:hash ~current_time with
+                  | Error (Domain.Storage_error msg) -> Http_response.Error_unauthorized msg
+                  | Error _ -> Http_response.Error_unauthorized "Authentication failed"
+                  | Ok pubkey ->
+                      Eio.traceln "Delete request for %s by %s" hash pubkey;
+                      (match BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey with
+                       | Ok () ->
+                           Eio.traceln "Delete successful: %s" hash;
+                           Http_response.Success_delete
+                       | Error (Domain.Blob_not_found _) ->
+                           Http_response.Error_not_found "Blob not found"
+                       | Error (Domain.Storage_error msg) when String.sub msg 0 (min 14 (String.length msg)) = "Not authorized" ->
+                           Http_response.Error_forbidden msg
+                       | Error (Domain.Storage_error msg) ->
+                           Http_response.Error_internal msg
+                       | Error _ ->
+                           Http_response.Error_internal "Delete failed"))
+       | _ -> Http_response.Error_not_found "Invalid path")
+
   | _ -> Http_response.Error_not_found "Not found"
   in
 
