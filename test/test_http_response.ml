@@ -54,6 +54,12 @@ let test_success_upload () =
   check int "Status code" 200 (get_status response);
   check_cors_headers response
 
+(* Success_delete レスポンステスト *)
+let test_success_delete () =
+  let response = Http_response.create Success_delete in
+  check int "Status code" 200 (get_status response);
+  check_cors_headers response
+
 (* Cors_preflight レスポンステスト *)
 let test_cors_preflight () =
   let response = Http_response.create Cors_preflight in
@@ -110,6 +116,7 @@ let tests = [
   test_case "Success_blob response" `Quick test_success_blob;
   test_case "Success_metadata response" `Quick test_success_metadata;
   test_case "Success_upload response" `Quick test_success_upload;
+  test_case "Success_delete response" `Quick test_success_delete;
   test_case "Cors_preflight response" `Quick test_cors_preflight;
   test_case "Error_not_found response" `Quick test_error_not_found;
   test_case "Error_unauthorized response" `Quick test_error_unauthorized;
