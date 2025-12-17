@@ -118,11 +118,11 @@ let validate_auth ~header ~action ~current_time =
           | Error e -> Error e
           | Ok () -> Ok event.pubkey
 
-let validate_delete_auth ~header ~sha256 ~current_time =
+let validate_auth_with_x_tag ~header ~sha256 ~action ~current_time =
   match parse_auth_header header with
   | Error e -> Error e
   | Ok event ->
-      match validate_event_structure event ~action:Delete ~current_time with
+      match validate_event_structure event ~action ~current_time with
       | Error e -> Error e
       | Ok () ->
           match validate_x_tag event ~sha256 with
@@ -132,16 +132,8 @@ let validate_delete_auth ~header ~sha256 ~current_time =
               | Error e -> Error e
               | Ok () -> Ok event.pubkey
 
+let validate_delete_auth ~header ~sha256 ~current_time =
+  validate_auth_with_x_tag ~header ~sha256 ~action:Delete ~current_time
+
 let validate_upload_auth ~header ~sha256 ~current_time =
-  match parse_auth_header header with
-  | Error e -> Error e
-  | Ok event ->
-      match validate_event_structure event ~action:Upload ~current_time with
-      | Error e -> Error e
-      | Ok () ->
-          match validate_x_tag event ~sha256 with
-          | Error e -> Error e
-          | Ok () ->
-              match verify_signature event with
-              | Error e -> Error e
-              | Ok () -> Ok event.pubkey
+  validate_auth_with_x_tag ~header ~sha256 ~action:Upload ~current_time
