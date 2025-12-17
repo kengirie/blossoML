@@ -77,6 +77,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
        | None -> Http_response.Error_unauthorized "Missing Authorization header"
        | Some auth_header ->
            let current_time = Int64.of_float (Eio.Time.now clock) in
+           (* まず認証イベントの基本検証（署名、期限、アクションタイプ） *)
            match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
            | Error (Domain.Storage_error msg) -> Http_response.Error_unauthorized msg
            | Error _ -> Http_response.Error_unauthorized "Authentication failed"
@@ -110,16 +111,27 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
                          Eio.traceln "Save failed: %s" msg;
                          Http_response.Error_internal msg
                      | Ok (hash, size, detected_mime_type) ->
-                         Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
-                         let descriptor = {
-                           Domain.url = Printf.sprintf "%s/%s" base_url hash;
-                           sha256 = hash;
-                           size = size;
-                           mime_type = detected_mime_type;
-                           uploaded = Int64.of_float (Eio.Time.now clock);
-                         } in
-                         Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
-                         Http_response.Success_upload descriptor)))
+                         (* 保存後にSHA256とxタグの照合を行う *)
+                         (match Auth.validate_upload_auth ~header:auth_header ~sha256:hash ~current_time with
+                          | Error (Domain.Storage_error msg) ->
+                              (* 照合失敗時はアップロードしたファイルを削除 *)
+                              Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
+                              let _ = BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey in
+                              Http_response.Error_bad_request msg
+                          | Error _ ->
+                              let _ = BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey in
+                              Http_response.Error_bad_request "Incorrect blob sha256"
+                          | Ok _ ->
+                              Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
+                              let descriptor = {
+                                Domain.url = Printf.sprintf "%s/%s" base_url hash;
+                                sha256 = hash;
+                                size = size;
+                                mime_type = detected_mime_type;
+                                uploaded = Int64.of_float (Eio.Time.now clock);
+                              } in
+                              Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
+                              Http_response.Success_upload descriptor))))
 
   | `DELETE, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in

@@ -131,3 +131,17 @@ let validate_delete_auth ~header ~sha256 ~current_time =
               match verify_signature event with
               | Error e -> Error e
               | Ok () -> Ok event.pubkey
+
+let validate_upload_auth ~header ~sha256 ~current_time =
+  match parse_auth_header header with
+  | Error e -> Error e
+  | Ok event ->
+      match validate_event_structure event ~action:Upload ~current_time with
+      | Error e -> Error e
+      | Ok () ->
+          match validate_x_tag event ~sha256 with
+          | Error e -> Error e
+          | Ok () ->
+              match verify_signature event with
+              | Error e -> Error e
+              | Ok () -> Ok event.pubkey
