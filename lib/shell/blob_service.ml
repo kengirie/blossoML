@@ -7,7 +7,7 @@ module type S = sig
   type storage
   type db
 
-  (** Blobを保存する（ストリーミング受信 → SHA256計算 → ファイル保存 → DB保存） *)
+  (** Blobを保存する（ストリーミング受信 → SHA256計算 → ファイル保存 → DB保存 → 所有者追加） *)
   val save :
     storage:storage ->
     db:db ->
@@ -31,7 +31,7 @@ module type S = sig
     sha256:string ->
     (Domain.blob_descriptor, Domain.error) result
 
-  (** Blobを削除する（所有者検証 → DB論理削除 → ファイル物理削除） *)
+  (** Blobを削除する（所有者検証 → 所有関係削除 → 所有者0なら論理削除＋物理削除） *)
   val delete :
     storage:storage ->
     db:db ->
@@ -65,13 +65,20 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
             mime_type
         in
 
-        (* DBにメタデータを保存 *)
-        match Db.save db ~sha256:result.sha256 ~size:result.size ~mime_type:final_mime_type ~uploader with
-        | Ok () -> Ok (result.sha256, result.size, final_mime_type)
+        (* DBにメタデータを保存（既存blobの場合は何もしない） *)
+        match Db.save db ~sha256:result.sha256 ~size:result.size ~mime_type:final_mime_type with
         | Error e ->
             (* DB保存失敗時はファイルも削除 *)
             let _ = Storage.unlink storage ~path:result.sha256 in
             Error e
+        | Ok () ->
+            (* 所有者を追加（重複時は何もしない） *)
+            match Db.add_owner db ~sha256:result.sha256 ~pubkey:uploader with
+            | Ok () -> Ok (result.sha256, result.size, final_mime_type)
+            | Error e ->
+                (* 所有者追加失敗時はファイルも削除 *)
+                let _ = Storage.unlink storage ~path:result.sha256 in
+                Error e
 
   let get ~sw ~storage ~db ~sha256 =
     match Db.get db ~sha256 with
@@ -119,20 +126,30 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
     | Error e -> Error e
 
   let delete ~storage ~db ~sha256 ~pubkey =
-    (* 1. アップローダー情報を取得し所有者検証 *)
-    match Db.get_uploader db ~sha256 with
+    (* 1. 所有者かどうか確認 *)
+    match Db.has_owner db ~sha256 ~pubkey with
     | Error e -> Error e
-    | Ok uploader_opt ->
-        (* アップローダーが記録されていて、リクエスト者と異なる場合は拒否 *)
-        (match uploader_opt with
-         | Some uploader when uploader <> pubkey ->
-             Error (Domain.Storage_error "Not authorized to delete this blob")
-         | _ ->
-             (* 2. DB論理削除 *)
-             match Db.delete db ~sha256 with
-             | Error e -> Error e
-             | Ok () ->
-                 (* 3. ファイル物理削除（エラーは無視してDBの状態を優先） *)
-                 let _ = Storage.unlink storage ~path:sha256 in
-                 Ok ())
+    | Ok false ->
+        (* 所有者でない場合は拒否 *)
+        Error (Domain.Storage_error "Not authorized to delete this blob")
+    | Ok true ->
+        (* 2. 所有関係を削除 *)
+        match Db.remove_owner db ~sha256 ~pubkey with
+        | Error e -> Error e
+        | Ok () ->
+            (* 3. 残りの所有者数を確認 *)
+            match Db.count_owners db ~sha256 with
+            | Error e -> Error e
+            | Ok count when count > 0 ->
+                (* 他の所有者がいる場合は所有関係の削除のみで終了 *)
+                Ok ()
+            | Ok _ ->
+                (* 所有者がいなくなった場合はblob自体を削除 *)
+                (* DB論理削除 *)
+                match Db.delete db ~sha256 with
+                | Error e -> Error e
+                | Ok () ->
+                    (* ファイル物理削除（エラーは無視してDBの状態を優先） *)
+                    let _ = Storage.unlink storage ~path:sha256 in
+                    Ok ()
 end
