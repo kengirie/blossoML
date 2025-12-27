@@ -172,8 +172,16 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
   log_response ~request response;
   response
 
-let start ~sw ~env ~port ~clock ~dir ~db ~base_url ?cert ?key () =
-  let address = `Tcp (Eio.Net.Ipaddr.V4.loopback, port) in
+let start ~sw ~env ~port ~host ~clock ~dir ~db ~base_url ?cert ?key () =
+  let ip_addr = match host with
+    | "localhost" | "127.0.0.1" -> Eio.Net.Ipaddr.V4.loopback
+    | "0.0.0.0" -> Eio.Net.Ipaddr.V4.any
+    | _ ->
+        (* Try to parse as IP address, fallback to any if invalid *)
+        try Eio.Net.Ipaddr.of_raw (Unix.inet_addr_of_string host |> Obj.magic)
+        with _ -> Eio.Net.Ipaddr.V4.any
+  in
+  let address = `Tcp (ip_addr, port) in
 
   let https =
     match cert, key with
