@@ -1,0 +1,79 @@
+# ocaml-nostr-blossom
+
+ocaml-nostr-blossom is yet another [Blossom](https://github.com/hzrd149/blossom) server implementation written in OCaml.
+
+### Endpoints
+
+- [x] `GET /<sha256>` - Get blob ([BUD-01](https://github.com/hzrd149/blossom/blob/master/buds/01.md))
+- [x] `HEAD /<sha256>` - Has blob ([BUD-01](https://github.com/hzrd149/blossom/blob/master/buds/01.md))
+- [x] `PUT /upload` - Upload blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
+- [x] `DELETE /<sha256>` - Delete blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
+- [ ] `GET /list/<pubkey>` - List blobs ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
+- [ ] `HEAD /upload` - Upload requirements ([BUD-06](https://github.com/hzrd149/blossom/blob/master/buds/06.md))
+- [ ] `PUT /mirror` - Mirror blob ([BUD-04](https://github.com/hzrd149/blossom/blob/master/buds/04.md))
+- [ ] `HEAD /media` - Media optimization info ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
+- [ ] `PUT /media` - Media optimization ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
+- [ ] `PUT /report` - Blob report ([BUD-09](https://github.com/hzrd149/blossom/blob/master/buds/09.md))
+
+## Technology Stack
+
+The OCaml libraries that ocaml-nostr-blossom depends on:
+
+- HTTP server: [Piaf](https://github.com/anmonteiro/piaf)
+- Concurrent I/O: [Eio](https://github.com/ocaml-multicore/eio)
+- Database: SQLite via [Caqti](https://github.com/paurkedal/ocaml-caqti)
+- Hashing: [Digestif](https://github.com/mirage/digestif) for SHA256
+- MIME detection: [Conan](https://github.com/mirage/conan)
+
+## Quick Start
+
+### Prerequisites
+
+- OCaml 5.x
+- opam
+- libsecp256k1
+
+### Installation
+
+```bash
+# Install dependencies
+opam install . --deps-only
+
+# Build
+dune build
+
+# Run
+dune exec ocaml-nostr-blossom -- --port 8082
+```
+
+### Command Line Options
+
+```
+--host      Host to bind to (default: localhost)
+            Use "0.0.0.0" for external access
+--port      Port to listen on (default: 8082)
+--cert      Path to SSL certificate (optional)
+--key       Path to SSL private key (optional)
+--base-url  Base URL for blob URLs in responses
+            (e.g., https://example.com:8082)
+```
+
+### Examples
+
+```bash
+# Local development
+dune exec ocaml-nostr-blossom -- --host localhost --port 8082
+
+# Production (external access)
+dune exec ocaml-nostr-blossom -- --host 0.0.0.0 --port 8082 --base-url https://your-domain.com
+```
+
+## How to Run Tests
+
+```bash
+dune test
+```
+
+## License
+
+MIT
