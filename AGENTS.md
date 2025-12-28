@@ -4,7 +4,7 @@
 The OCaml sources live under `lib/`, split between `core/` (policy, auth, BIP-340, integrity logic) and `shell/` (HTTP server and storage adapters). The HTTP executable lands in `bin/main.ml`, while reusable test helpers and suites sit in `test/`. Scripts for end-to-end checks (`test_phase*.sh`, `test_cors.sh`, `test_auth_integration.sh`) and sample payloads in `data/` support manual verification.
 
 ## Build, Test, and Development Commands
-- `opam install . --deps-only` — install compiler switches and library dependencies declared in `ocaml-nostr-blossom.opam`.
+- `opam install . --deps-only` — install compiler switches and library dependencies declared in `blossoML.opam`.
 - `dune build` — compile the server and libraries, producing `_build/default/bin/main.exe`.
 - `dune exec bin/main.exe` — run the HTTP server locally with in-memory storage.
 - `dune runtest` — execute all Alcotest suites in `test/`.

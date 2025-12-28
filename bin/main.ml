@@ -55,7 +55,7 @@ let run_server cert key port host base_url =
 
 let server_cmd =
   let doc = "Blossom Server - A file storage server with Nostr authentication" in
-  let info = Cmd.info "ocaml-nostr-blossom" ~version:"0.1.0" ~doc in
+  let info = Cmd.info "blossoML" ~version:"0.1.0" ~doc in
   Cmd.v info Term.(const run_server $ cert_arg $ key_arg $ port_arg $ host_arg $ base_url_arg)
 
 let () = exit (Cmd.eval server_cmd)

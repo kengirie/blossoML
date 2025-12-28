@@ -17,7 +17,7 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 
 ## Technology Stack
 
-The OCaml libraries that ocaml-nostr-blossom depends on:
+The OCaml libraries that blossoML depends on:
 
 - HTTP server: [Piaf](https://github.com/anmonteiro/piaf)
 - Concurrent I/O: [Eio](https://github.com/ocaml-multicore/eio)
@@ -43,7 +43,7 @@ opam install . --deps-only
 dune build
 
 # Run
-dune exec ocaml-nostr-blossom -- --port 8082
+dune exec blossoML -- --port 8082
 ```
 
 ### Command Line Options
@@ -62,10 +62,10 @@ dune exec ocaml-nostr-blossom -- --port 8082
 
 ```bash
 # Local development
-dune exec ocaml-nostr-blossom -- --host localhost --port 8082
+dune exec blossoML -- --host localhost --port 8082
 
 # Production (external access)
-dune exec ocaml-nostr-blossom -- --host 0.0.0.0 --port 8082 --base-url https://your-domain.com
+dune exec blossoML -- --host 0.0.0.0 --port 8082 --base-url https://your-domain.com
 ```
 
 ## How to Run Tests

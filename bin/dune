@@ -1,4 +1,4 @@
 (executable
- (public_name ocaml-nostr-blossom)
+ (public_name blossoML)
  (name main)
- (libraries ocaml-nostr-blossom.shell eio_main cmdliner))
+ (libraries blossoML.shell eio_main cmdliner))

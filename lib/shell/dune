@@ -1,8 +1,8 @@
 (library
  (name blossom_shell)
- (public_name ocaml-nostr-blossom.shell)
+ (public_name blossoML.shell)
  (libraries
-  ocaml-nostr-blossom.core
+  blossoML.core
   piaf
   eio
   eio_main
