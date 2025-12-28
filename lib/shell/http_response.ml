@@ -90,12 +90,16 @@ let create = function
 
   | Success_upload descriptor ->
       let json = descriptor_to_json descriptor in
-      let headers = Headers.of_list cors_headers in
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", "application/json");
+      ]) in
       Response.create ~headers ~body:(Body.of_string json) `OK
 
   | Success_delete ->
       let json = `Assoc [("message", `String "Deleted")] |> Yojson.Basic.to_string in
-      let headers = Headers.of_list cors_headers in
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", "application/json");
+      ]) in
       Response.create ~headers ~body:(Body.of_string json) `OK
 
   | Cors_preflight ->
