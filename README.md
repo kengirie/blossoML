@@ -1,6 +1,6 @@
-# ocaml-nostr-blossom
+# blossoML
 
-ocaml-nostr-blossom is yet another [Blossom](https://github.com/hzrd149/blossom) server implementation written in OCaml.
+blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server implementation written in OCaml.
 
 ### Endpoints
 
