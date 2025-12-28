@@ -28,6 +28,7 @@ _opam/
 
 # Application specific
 data/
+db/
 *.log
 
 # Test artifacts

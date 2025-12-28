@@ -28,7 +28,7 @@ let error_to_response_kind = function
   | Domain.Invalid_size s -> Http_response.Error_bad_request (Printf.sprintf "Invalid size: %d" s)
   | Domain.Invalid_hash h -> Http_response.Error_bad_request (Printf.sprintf "Invalid hash: %s" h)
 
-let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } =
+let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
 
   (* レスポンス種別を決定 *)
@@ -45,7 +45,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
            if not (Integrity.validate_hash hash) then
              Http_response.Error_not_found "Invalid path or hash"
            else
-             (match BlobService.get ~sw ~storage:dir ~db ~sha256:hash with
+             (match BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash with
               | Ok (body, metadata) ->
                   Http_response.Success_blob_stream {
                     body;
@@ -63,7 +63,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
            if not (Integrity.validate_hash hash) then
              Http_response.Error_not_found "Invalid path or hash"
            else
-             (match BlobService.get_metadata ~storage:dir ~db ~sha256:hash with
+             (match BlobService.get_metadata ~storage:data_dir ~db ~sha256:hash with
               | Ok metadata ->
                   Http_response.Success_metadata {
                     mime_type = metadata.mime_type;
@@ -102,7 +102,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
                (match Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type with
                 | Error e -> error_to_response_kind e
                 | Ok () ->
-                    (match BlobService.save ~storage:dir ~db ~body:request.body ~mime_type ~uploader:pubkey with
+                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey with
                      | Error e ->
                          let msg = match e with
                            | Domain.Storage_error m -> m
@@ -116,10 +116,10 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
                           | Error (Domain.Storage_error msg) ->
                               (* 照合失敗時はアップロードしたファイルを削除 *)
                               Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
-                              let _ = BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey in
+                              let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
                               Http_response.Error_bad_request msg
                           | Error _ ->
-                              let _ = BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey in
+                              let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
                               Http_response.Error_bad_request "Incorrect blob sha256"
                           | Ok _ ->
                               Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
@@ -150,7 +150,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
                   | Error _ -> Http_response.Error_unauthorized "Authentication failed"
                   | Ok pubkey ->
                       Eio.traceln "Delete request for %s by %s" hash pubkey;
-                      (match BlobService.delete ~storage:dir ~db ~sha256:hash ~pubkey with
+                      (match BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey with
                        | Ok () ->
                            Eio.traceln "Delete successful: %s" hash;
                            Http_response.Success_delete
@@ -172,7 +172,7 @@ let request_handler ~sw ~clock ~dir ~db ~base_url { Server.Handler.request; _ } 
   log_response ~request response;
   response
 
-let start ~sw ~env ~port ~host ~clock ~dir ~db ~base_url ?cert ?key () =
+let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
   let ip_addr = match host with
     | "localhost" | "127.0.0.1" -> Eio.Net.Ipaddr.V4.loopback
     | "0.0.0.0" -> Eio.Net.Ipaddr.V4.any
@@ -199,6 +199,6 @@ let start ~sw ~env ~port ~host ~clock ~dir ~db ~base_url ?cert ?key () =
       address
   in
 
-  let server = Server.create ~config (request_handler ~sw ~clock ~dir ~db ~base_url) in
+  let server = Server.create ~config (request_handler ~sw ~clock ~data_dir ~db ~base_url) in
   let _ = Server.Command.start ~sw env server in
   ()

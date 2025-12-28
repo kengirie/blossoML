@@ -24,11 +24,13 @@ let run_server cert key port host base_url =
   Eio_main.run (fun env ->
     Eio.Switch.run (fun sw ->
       let clock = Eio.Stdenv.clock env in
-      let dir = Eio.Path.(Eio.Stdenv.cwd env / "data") in
-      Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 dir;
+      let data_dir = Eio.Path.(Eio.Stdenv.cwd env / "data") in
+      let db_dir = Eio.Path.(Eio.Stdenv.cwd env / "db") in
+      Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 data_dir;
+      Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 db_dir;
 
       Eio.traceln "Initializing database...";
-      match Blossom_shell.Blossom_db.init ~env ~sw ~dir with
+      match Blossom_shell.Blossom_db.init ~env ~sw ~dir:db_dir with
       | Error e ->
           let msg = match e with
             | Blossom_core.Domain.Storage_error msg -> msg
@@ -45,7 +47,7 @@ let run_server cert key port host base_url =
                 Printf.sprintf "%s://localhost:%d" scheme port
           in
           Eio.traceln "Starting Blossom server on %s:%d (base URL: %s)" host port effective_base_url;
-          Blossom_shell.Http_server.start ~sw ~env ~port ~host ~clock ~dir ~db ~base_url:effective_base_url ?cert ?key ();
+          Blossom_shell.Http_server.start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url:effective_base_url ?cert ?key ();
           (* Keep the server running *)
           Eio.Fiber.await_cancel ()
     )
