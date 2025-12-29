@@ -14,10 +14,12 @@ module type S = sig
   (** ファイルシステム操作のコンテキスト（Eio.Path.tなど） *)
   type t
 
-  (** ストリーミングでファイルを保存しながらSHA256を計算する *)
+  (** ストリーミングでファイルを保存しながらSHA256を計算する
+      max_size: 最大サイズ（バイト）。超過時はエラーを返し一時ファイルを削除する *)
   val save :
     t ->
     body:Piaf.Body.t ->
+    max_size:int ->
     (save_result, Domain.error) result
 
   (** ストリーミングでファイルを取得する *)

@@ -11,3 +11,4 @@ type error =
   | Invalid_size of int
   | Blob_not_found of string
   | Storage_error of string
+  | Payload_too_large of int * int  (* actual_size, max_size *)

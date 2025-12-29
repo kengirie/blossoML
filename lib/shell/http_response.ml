@@ -29,6 +29,8 @@ type response_kind =
     (** 403 Forbidden *)
   | Error_bad_request of string
     (** 400 Bad Request *)
+  | Error_payload_too_large of string
+    (** 413 Payload Too Large *)
   | Error_internal of string
     (** 500 Internal Server Error *)
 
@@ -121,6 +123,10 @@ let create = function
   | Error_bad_request message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Bad_request
+
+  | Error_payload_too_large message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
+      Response.create ~headers ~body:(Body.of_string message) `Payload_too_large
 
   | Error_internal message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in

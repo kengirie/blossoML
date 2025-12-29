@@ -7,13 +7,15 @@ module type S = sig
   type storage
   type db
 
-  (** Blobを保存する（ストリーミング受信 → SHA256計算 → ファイル保存 → DB保存 → 所有者追加） *)
+  (** Blobを保存する（ストリーミング受信 → SHA256計算 → ファイル保存 → DB保存 → 所有者追加）
+      max_size: 最大サイズ（バイト）。超過時はエラーを返す *)
   val save :
     storage:storage ->
     db:db ->
     body:Piaf.Body.t ->
     mime_type:string ->
     uploader:string ->
+    max_size:int ->
     (string * int * string, Domain.error) result  (* sha256, size, mime_type *)
 
   (** Blobを取得する（DB取得 → ストリーミング返却） *)
@@ -47,9 +49,9 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
   type storage = Storage.t
   type db = Db.t
 
-  let save ~storage ~db ~body ~mime_type ~uploader =
-    (* ストレージに保存 *)
-    match Storage.save storage ~body with
+  let save ~storage ~db ~body ~mime_type ~uploader ~max_size =
+    (* ストレージに保存（サイズ制限付き） *)
+    match Storage.save storage ~body ~max_size with
     | Error e -> Error e
     | Ok result ->
         (* MIME type がデフォルト値の場合、先頭チャンクから検出を試みる *)

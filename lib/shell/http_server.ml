@@ -27,6 +27,8 @@ let error_to_response_kind = function
   | Domain.Storage_error msg -> Http_response.Error_internal msg
   | Domain.Invalid_size s -> Http_response.Error_bad_request (Printf.sprintf "Invalid size: %d" s)
   | Domain.Invalid_hash h -> Http_response.Error_bad_request (Printf.sprintf "Invalid hash: %s" h)
+  | Domain.Payload_too_large (actual, max) ->
+      Http_response.Error_payload_too_large (Printf.sprintf "File too large: %d bytes (max: %d)" actual max)
 
 let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
@@ -92,18 +94,27 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                      | Some xct when String.length xct > 0 -> xct
                      | _ -> "application/octet-stream"
                in
-               let content_length =
-                 Headers.get request.headers "content-length"
-                 |> Option.map int_of_string
-                 |> Option.value ~default:0
+               let content_length_result =
+                 match Headers.get request.headers "content-length" with
+                 | None -> Ok 0
+                 | Some s ->
+                     match int_of_string_opt s with
+                     | Some n when n >= 0 -> Ok n
+                     | Some _ -> Error "Content-Length must be non-negative"
+                     | None -> Error "Invalid Content-Length header"
                in
 
-               let policy = Policy.default_policy in
-               (match Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type with
-                | Error e -> error_to_response_kind e
-                | Ok () ->
+               (match content_length_result with
+                | Error msg -> Http_response.Error_bad_request msg
+                | Ok content_length ->
+                    let policy = Policy.default_policy in
+                    (* Content-Length が指定されている場合は事前チェック *)
+                    (match if content_length > 0 then Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type else Ok () with
+                     | Error e -> error_to_response_kind e
+                     | Ok () ->
                     (* Use original mime_type to preserve parameters like charset, boundary *)
-                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey with
+                    (* ストリーミング中にサイズ制限を適用 *)
+                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey ~max_size:policy.max_size with
                      | Error e ->
                          let msg = match e with
                            | Domain.Storage_error m -> m
@@ -132,7 +143,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                                 uploaded = Int64.of_float (Eio.Time.now clock);
                               } in
                               Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
-                              Http_response.Success_upload descriptor))))
+                              Http_response.Success_upload descriptor)))))
 
   | `DELETE, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in

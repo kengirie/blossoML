@@ -24,7 +24,10 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
     | exn ->
         Error (Domain.Storage_error (Printexc.to_string exn))
 
-  let save dir ~body =
+  (** サイズ超過を示す例外 *)
+  exception Size_limit_exceeded of int
+
+  let save dir ~body ~max_size =
     (* 一時ファイル名を生成 *)
     let temp_id = Printf.sprintf "tmp_%d_%d" (Random.int 1000000) (Random.int 1000000) in
     let temp_path = Eio.Path.(dir / temp_id) in
@@ -35,20 +38,29 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
         Ok (Eio.Path.with_open_out ~create:(`Or_truncate 0o644) temp_path (fun file ->
           let init = { ctx = Digestif.SHA256.init (); size = 0; first_chunk = None } in
           Piaf.Body.fold_string body ~init ~f:(fun state chunk ->
+            let new_size = state.size + String.length chunk in
+            (* サイズ制限チェック *)
+            if new_size > max_size then
+              raise (Size_limit_exceeded new_size);
             (* ファイルに書き込み *)
             Eio.Flow.copy_string chunk file;
             (* 状態を更新 *)
             {
               ctx = Digestif.SHA256.feed_string state.ctx chunk;
-              size = state.size + String.length chunk;
+              size = new_size;
               first_chunk = if Option.is_none state.first_chunk then Some chunk else state.first_chunk;
             }
           )
         ))
-      with exn ->
-        (* 一時ファイルを削除 *)
-        (try Eio.Path.unlink temp_path with _ -> ());
-        Error (Domain.Storage_error (Printexc.to_string exn))
+      with
+      | Size_limit_exceeded size ->
+          (* サイズ超過時は一時ファイルを削除 *)
+          (try Eio.Path.unlink temp_path with _ -> ());
+          Error (Domain.Payload_too_large (size, max_size))
+      | exn ->
+          (* 一時ファイルを削除 *)
+          (try Eio.Path.unlink temp_path with _ -> ());
+          Error (Domain.Storage_error (Printexc.to_string exn))
     in
 
     match write_result with
