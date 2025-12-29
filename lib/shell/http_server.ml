@@ -102,6 +102,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                (match Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type with
                 | Error e -> error_to_response_kind e
                 | Ok () ->
+                    (* Use original mime_type to preserve parameters like charset, boundary *)
                     (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey with
                      | Error e ->
                          let msg = match e with

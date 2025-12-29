@@ -6,4 +6,5 @@ let () =
     "BIP340", Test_bip340.tests;
     "Http_response", Test_http_response.tests;
     "Mime_detect", Test_mime_detect.tests;
+    "Content_type", Test_content_type.tests;
   ]

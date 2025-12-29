@@ -18,14 +18,18 @@ let check_size ~policy size =
   else Ok ()
 
 let check_mime_type ~policy mime =
-  if String.length mime = 0 then
-    Error (Storage_error "Empty MIME type")
-  else if policy.allowed_mime_types = [] then
-    Ok () (* 空リストの場合は全て許可 *)
-  else if List.mem mime policy.allowed_mime_types then
-    Ok ()
-  else
-    Error (Storage_error (Printf.sprintf "MIME type not allowed: %s" mime))
+  match Content_type.normalize_media_type mime with
+  | Error Content_type.Empty_input ->
+      Error (Storage_error "Empty MIME type")
+  | Error (Content_type.Invalid_format msg) ->
+      Error (Storage_error (Printf.sprintf "Invalid Content-Type: %s" msg))
+  | Ok normalized ->
+      if policy.allowed_mime_types = [] then
+        Ok () (* 空リストの場合は全て許可 *)
+      else if List.mem normalized policy.allowed_mime_types then
+        Ok ()
+      else
+        Error (Storage_error (Printf.sprintf "MIME type not allowed: %s" normalized))
 
 let check_upload_policy ~policy ~size ~mime =
   match check_size ~policy size with

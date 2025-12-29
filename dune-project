@@ -28,6 +28,7 @@
   digestif
   checkseum
   alcotest
+  angstrom
   conan
   conan-database
   yojson
