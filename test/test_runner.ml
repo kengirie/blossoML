@@ -7,4 +7,5 @@ let () =
     "Http_response", Test_http_response.tests;
     "Mime_detect", Test_mime_detect.tests;
     "Content_type", Test_content_type.tests;
+    "Nostr_event", Test_nostr_event.tests;
   ]

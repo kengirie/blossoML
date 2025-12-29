@@ -1,10 +1,10 @@
 open Alcotest
 open Blossom_core
 
-(* Test vectors provided by user *)
-let event1_id = "06d4842b9d7f8bf72440471704de4efa9ef8f0348e366d097405573994f66294"
-let event1_pubkey = "ec0d11351457798907a3900fe465bfdc3b081be6efeb3d68c4d67774c0bc1f9a"
-let event1_signature = "22ecb5116ba143e4c3d6dc4b53d549aed6970ec455f6d25d145e0ad1fd7c0e26c465b2e92d5fdf699c7050fa43e6a41f087ef167208d4f06425f61548168fd7f"
+(* Test vectors - real Nostr events with verified IDs *)
+let event1_id = "f5f352b3633d79a37d1e5b49d5d440b6e507683aa59517c70c07b08e7ac0a1be"
+let event1_pubkey = "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d"
+let event1_signature = "81637f697529ecd7a84029a5b620ec63f56731505df440c2b23a3b6a383d73a6b13640036c35b6333bb3fbe438190779ef7bb0da924b8bc8d5d56d56b099e6f8"
 
 let event2_id = "d9484f18533d5e36f000f902a45b15a7eecf5fbfcb046789756d57ea87115dc5"
 let event2_pubkey = "b5f07faa8d3529f03bd898a23dfb3257bab8d8f5490777c46076ff9647e205dc"

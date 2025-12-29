@@ -1,4 +1,4 @@
 (test
  (name test_runner)
- (modules test_runner test_integrity test_policy test_auth test_bip340 test_http_response test_mime_detect test_content_type)
+ (modules test_runner test_integrity test_policy test_auth test_bip340 test_http_response test_mime_detect test_content_type test_nostr_event)
  (libraries blossoML.core blossoML.shell alcotest base64))

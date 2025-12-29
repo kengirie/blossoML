@@ -1,13 +1,4 @@
-(* Nostr event type for kind 24242 *)
-type nostr_event = {
-  id : string;
-  pubkey : string;
-  created_at : int64;
-  kind : int;
-  tags : string list list;
-  content : string;
-  signature : string;
-}
+(** Blossom authentication for kind 24242 events (BUD-01/BUD-02). *)
 
 type action = Upload | Download | Delete
 
@@ -16,36 +7,15 @@ let action_to_string = function
   | Download -> "get"
   | Delete -> "delete"
 
-(* Helper to extract tag value *)
-let find_tag event tag_name =
-  try
-    let tag = List.find (fun t ->
-      match t with
-      | name :: _ -> name = tag_name
-      | _ -> false
-    ) event.tags in
-    match tag with
-    | _ :: value :: _ -> Some value
-    | _ -> None
-  with Not_found -> None
-
-(* Helper to extract all values for a tag name *)
-let find_all_tags event tag_name =
-  event.tags
-  |> List.filter_map (fun t ->
-      match t with
-      | name :: value :: _ when name = tag_name -> Some value
-      | _ -> None)
-
 (* Validate that x tag contains the specified hash *)
 let validate_x_tag event ~sha256 =
-  let x_tags = find_all_tags event "x" in
+  let x_tags = Nostr_event.find_all_tags event "x" in
   if List.mem sha256 x_tags then
     Ok ()
   else
     Error (Domain.Storage_error "Authorization event does not contain matching x tag for this blob")
 
-let parse_auth_header header =
+let parse_auth_header header : (Nostr_event.t, Domain.error) result =
   try
     (* Format: "Nostr <base64-encoded-json>" *)
     match String.split_on_char ' ' header with
@@ -53,14 +23,14 @@ let parse_auth_header header =
         let decoded = Base64.decode_exn encoded in
         let json = Yojson.Safe.from_string decoded in
         let open Yojson.Safe.Util in
-        let event = {
+        let event : Nostr_event.t = {
           id = json |> member "id" |> to_string;
           pubkey = json |> member "pubkey" |> to_string;
           created_at = json |> member "created_at" |> to_int |> Int64.of_int;
           kind = json |> member "kind" |> to_int;
           tags = json |> member "tags" |> to_list |> List.map (fun tag -> tag |> to_list |> List.map to_string);
           content = json |> member "content" |> to_string;
-          signature = json |> member "sig" |> to_string;
+          sig_ = json |> member "sig" |> to_string;
         } in
         Ok event
     | _ -> Error (Domain.Storage_error "Invalid Authorization header format")
@@ -68,13 +38,14 @@ let parse_auth_header header =
   | Yojson.Json_error msg -> Error (Domain.Storage_error ("JSON parse error: " ^ msg))
   | _ -> Error (Domain.Storage_error "Failed to parse Authorization header")
 
-let validate_event_structure event ~action ~current_time =
+(* Validate Blossom-specific event structure *)
+let validate_blossom_event (event : Nostr_event.t) ~action ~current_time =
   if event.kind <> 24242 then
     Error (Domain.Storage_error "Invalid event kind, must be 24242")
   else if event.created_at > current_time then
     Error (Domain.Storage_error "Event created_at is in the future")
   else
-    match find_tag event "expiration" with
+    match Nostr_event.find_tag event "expiration" with
     | None -> Error (Domain.Storage_error "Missing expiration tag")
     | Some exp_str ->
         (try
@@ -82,7 +53,7 @@ let validate_event_structure event ~action ~current_time =
           if expiration <= current_time then
             Error (Domain.Storage_error "Event has expired")
           else
-            match find_tag event "t" with
+            match Nostr_event.find_tag event "t" with
             | None -> Error (Domain.Storage_error "Missing t tag")
             | Some t_value ->
                 if t_value <> action_to_string action then
@@ -91,30 +62,23 @@ let validate_event_structure event ~action ~current_time =
                   Ok ()
         with _ -> Error (Domain.Storage_error "Invalid expiration timestamp"))
 
-let verify_signature event =
-  (* Verify signature using BIP340 *)
-  if String.length event.id <> 64 then
-    Error (Domain.Storage_error "Invalid event ID length")
-  else if String.length event.pubkey <> 64 then
-    Error (Domain.Storage_error "Invalid pubkey length")
-  else if String.length event.signature <> 128 then
-    Error (Domain.Storage_error "Invalid signature length")
+(* Verify event using Nostr_event, returning Domain.error *)
+let verify_event (event : Nostr_event.t) =
+  if not (Nostr_event.verify_id event) then
+    Error (Domain.Storage_error "Event ID does not match computed hash")
+  else if not (Nostr_event.verify_signature event) then
+    Error (Domain.Storage_error "Invalid signature")
   else
-    try
-      if Bip340.verify ~pubkey:event.pubkey ~msg:event.id ~signature:event.signature then
-        Ok ()
-      else
-        Error (Domain.Storage_error "Invalid signature")
-    with _ -> Error (Domain.Storage_error "Signature verification failed")
+    Ok ()
 
 let validate_auth ~header ~action ~current_time =
   match parse_auth_header header with
   | Error e -> Error e
   | Ok event ->
-      match validate_event_structure event ~action ~current_time with
+      match validate_blossom_event event ~action ~current_time with
       | Error e -> Error e
       | Ok () ->
-          match verify_signature event with
+          match verify_event event with
           | Error e -> Error e
           | Ok () -> Ok event.pubkey
 
@@ -122,13 +86,13 @@ let validate_auth_with_x_tag ~header ~sha256 ~action ~current_time =
   match parse_auth_header header with
   | Error e -> Error e
   | Ok event ->
-      match validate_event_structure event ~action ~current_time with
+      match validate_blossom_event event ~action ~current_time with
       | Error e -> Error e
       | Ok () ->
           match validate_x_tag event ~sha256 with
           | Error e -> Error e
           | Ok () ->
-              match verify_signature event with
+              match verify_event event with
               | Error e -> Error e
               | Ok () -> Ok event.pubkey
 
