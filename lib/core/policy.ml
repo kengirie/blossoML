@@ -14,22 +14,22 @@ let default_policy = {
 let check_size ~policy size =
   if size < 0 then Error (Invalid_size size)
   else if size > policy.max_size then
-    Error (Storage_error (Printf.sprintf "File too large: %d bytes (max: %d)" size policy.max_size))
+    Error (Payload_too_large (size, policy.max_size))
   else Ok ()
 
 let check_mime_type ~policy mime =
   match Content_type.normalize_media_type mime with
   | Error Content_type.Empty_input ->
-      Error (Storage_error "Empty MIME type")
+      Error (Invalid_content_type "Empty MIME type")
   | Error (Content_type.Invalid_format msg) ->
-      Error (Storage_error (Printf.sprintf "Invalid Content-Type: %s" msg))
+      Error (Invalid_content_type (Printf.sprintf "Invalid Content-Type: %s" msg))
   | Ok normalized ->
       if policy.allowed_mime_types = [] then
         Ok () (* 空リストの場合は全て許可 *)
       else if List.mem normalized policy.allowed_mime_types then
         Ok ()
       else
-        Error (Storage_error (Printf.sprintf "MIME type not allowed: %s" normalized))
+        Error (Unsupported_media_type (Printf.sprintf "MIME type not allowed: %s" normalized))
 
 let check_upload_policy ~policy ~size ~mime =
   match check_size ~policy size with

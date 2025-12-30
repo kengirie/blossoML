@@ -29,6 +29,10 @@ let error_to_response_kind = function
   | Domain.Invalid_hash h -> Http_response.Error_bad_request (Printf.sprintf "Invalid hash: %s" h)
   | Domain.Payload_too_large (actual, max) ->
       Http_response.Error_payload_too_large (Printf.sprintf "File too large: %d bytes (max: %d)" actual max)
+  | Domain.Auth_error msg -> Http_response.Error_unauthorized msg
+  | Domain.Forbidden msg -> Http_response.Error_forbidden msg
+  | Domain.Unsupported_media_type msg -> Http_response.Error_unsupported_media_type msg
+  | Domain.Invalid_content_type msg -> Http_response.Error_bad_request msg
 
 let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
@@ -81,8 +85,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
            let current_time = Int64.of_float (Eio.Time.now clock) in
            (* まず認証イベントの基本検証（署名、期限、アクションタイプ） *)
            match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
-           | Error (Domain.Storage_error msg) -> Http_response.Error_unauthorized msg
-           | Error _ -> Http_response.Error_unauthorized "Authentication failed"
+           | Error e -> error_to_response_kind e
            | Ok pubkey ->
                (* Content-Type -> X-Content-Type -> default の優先順位で MIME type を取得 *)
                (* 空文字列の場合もデフォルト値にフォールバック *)
@@ -116,23 +119,16 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                     (* ストリーミング中にサイズ制限を適用 *)
                     (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey ~max_size:policy.max_size with
                      | Error e ->
-                         let msg = match e with
-                           | Domain.Storage_error m -> m
-                           | _ -> "Unknown error"
-                         in
-                         Eio.traceln "Save failed: %s" msg;
-                         Http_response.Error_internal msg
+                         Eio.traceln "Save failed: %s" (match e with Domain.Storage_error m -> m | _ -> "Unknown error");
+                         error_to_response_kind e
                      | Ok (hash, size, detected_mime_type) ->
                          (* 保存後にSHA256とxタグの照合を行う *)
                          (match Auth.validate_upload_auth ~header:auth_header ~sha256:hash ~current_time with
-                          | Error (Domain.Storage_error msg) ->
+                          | Error e ->
                               (* 照合失敗時はアップロードしたファイルを削除 *)
                               Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
                               let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
-                              Http_response.Error_bad_request msg
-                          | Error _ ->
-                              let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
-                              Http_response.Error_bad_request "Incorrect blob sha256"
+                              error_to_response_kind e
                           | Ok _ ->
                               Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
                               let descriptor = {
@@ -158,22 +154,21 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
               | Some auth_header ->
                   let current_time = Int64.of_float (Eio.Time.now clock) in
                   match Auth.validate_delete_auth ~header:auth_header ~sha256:hash ~current_time with
-                  | Error (Domain.Storage_error msg) -> Http_response.Error_unauthorized msg
-                  | Error _ -> Http_response.Error_unauthorized "Authentication failed"
+                  | Error e -> error_to_response_kind e
                   | Ok pubkey ->
                       Eio.traceln "Delete request for %s by %s" hash pubkey;
                       (match BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey with
                        | Ok () ->
                            Eio.traceln "Delete successful: %s" hash;
                            Http_response.Success_delete
-                       | Error (Domain.Blob_not_found _) ->
-                           Http_response.Error_not_found "Blob not found"
-                       | Error (Domain.Storage_error msg) when String.sub msg 0 (min 14 (String.length msg)) = "Not authorized" ->
-                           Http_response.Error_forbidden msg
-                       | Error (Domain.Storage_error msg) ->
-                           Http_response.Error_internal msg
-                       | Error _ ->
-                           Http_response.Error_internal "Delete failed"))
+                       | Error e ->
+                           Eio.traceln "Delete failed for %s: %s" hash
+                             (match e with
+                              | Domain.Storage_error msg -> msg
+                              | Domain.Forbidden msg -> msg
+                              | Domain.Blob_not_found _ -> "Blob not found"
+                              | _ -> "Unknown error");
+                           error_to_response_kind e))
        | _ -> Http_response.Error_not_found "Invalid path")
 
   | _ -> Http_response.Error_not_found "Not found"

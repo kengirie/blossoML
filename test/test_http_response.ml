@@ -112,6 +112,49 @@ let test_descriptor_to_json () =
   check string "Type" "image/jpeg" (json |> member "type" |> to_string);
   check int "Uploaded" 9876543210 (json |> member "uploaded" |> to_int)
 
+(* Error_forbidden レスポンステスト *)
+let test_error_forbidden () =
+  let response = Http_response.create (Error_forbidden "Not authorized") in
+  check int "Status code" 403 (get_status response);
+  check (option string) "X-Reason header" (Some "Not authorized") (get_header response "x-reason");
+  check_cors_headers response
+
+(* error_to_response_kind マッピングテスト *)
+let test_error_to_response_kind_auth_error () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Auth_error "Invalid signature") in
+  let response = Http_response.create response_kind in
+  check int "Auth_error maps to 401" 401 (get_status response)
+
+let test_error_to_response_kind_forbidden () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Forbidden "Not authorized to delete") in
+  let response = Http_response.create response_kind in
+  check int "Forbidden maps to 403" 403 (get_status response)
+
+let test_error_to_response_kind_unsupported_media_type () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Unsupported_media_type "MIME type not allowed: video/mp4") in
+  let response = Http_response.create response_kind in
+  check int "Unsupported_media_type maps to 415" 415 (get_status response)
+
+let test_error_to_response_kind_invalid_content_type () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Invalid_content_type "Empty MIME type") in
+  let response = Http_response.create response_kind in
+  check int "Invalid_content_type maps to 400" 400 (get_status response)
+
+let test_error_to_response_kind_storage_error () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Storage_error "Database connection failed") in
+  let response = Http_response.create response_kind in
+  check int "Storage_error maps to 500" 500 (get_status response)
+
+let test_error_to_response_kind_blob_not_found () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Blob_not_found "abc123") in
+  let response = Http_response.create response_kind in
+  check int "Blob_not_found maps to 404" 404 (get_status response)
+
+let test_error_to_response_kind_payload_too_large () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Payload_too_large (200, 100)) in
+  let response = Http_response.create response_kind in
+  check int "Payload_too_large maps to 413" 413 (get_status response)
+
 let tests = [
   test_case "Success_blob response" `Quick test_success_blob;
   test_case "Success_metadata response" `Quick test_success_metadata;
@@ -120,7 +163,16 @@ let tests = [
   test_case "Cors_preflight response" `Quick test_cors_preflight;
   test_case "Error_not_found response" `Quick test_error_not_found;
   test_case "Error_unauthorized response" `Quick test_error_unauthorized;
+  test_case "Error_forbidden response" `Quick test_error_forbidden;
   test_case "Error_bad_request response" `Quick test_error_bad_request;
   test_case "Error_internal response" `Quick test_error_internal;
   test_case "descriptor_to_json function" `Quick test_descriptor_to_json;
+  (* error_to_response_kind mapping tests *)
+  test_case "Auth_error -> 401" `Quick test_error_to_response_kind_auth_error;
+  test_case "Forbidden -> 403" `Quick test_error_to_response_kind_forbidden;
+  test_case "Unsupported_media_type -> 415" `Quick test_error_to_response_kind_unsupported_media_type;
+  test_case "Invalid_content_type -> 400" `Quick test_error_to_response_kind_invalid_content_type;
+  test_case "Storage_error -> 500" `Quick test_error_to_response_kind_storage_error;
+  test_case "Blob_not_found -> 404" `Quick test_error_to_response_kind_blob_not_found;
+  test_case "Payload_too_large -> 413" `Quick test_error_to_response_kind_payload_too_large;
 ]

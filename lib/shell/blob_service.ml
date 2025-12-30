@@ -133,7 +133,7 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
     | Error e -> Error e
     | Ok false ->
         (* 所有者でない場合は拒否 *)
-        Error (Domain.Storage_error "Not authorized to delete this blob")
+        Error (Domain.Forbidden "Not authorized to delete this blob")
     | Ok true ->
         (* 2. 所有関係を削除 *)
         match Db.remove_owner db ~sha256 ~pubkey with

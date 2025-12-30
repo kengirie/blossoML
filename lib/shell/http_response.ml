@@ -31,6 +31,8 @@ type response_kind =
     (** 400 Bad Request *)
   | Error_payload_too_large of string
     (** 413 Payload Too Large *)
+  | Error_unsupported_media_type of string
+    (** 415 Unsupported Media Type *)
   | Error_internal of string
     (** 500 Internal Server Error *)
 
@@ -127,6 +129,10 @@ let create = function
   | Error_payload_too_large message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Payload_too_large
+
+  | Error_unsupported_media_type message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
+      Response.create ~headers ~body:(Body.of_string message) `Unsupported_media_type
 
   | Error_internal message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in

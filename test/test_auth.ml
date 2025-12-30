@@ -101,7 +101,7 @@ let test_parse_auth_header_valid () =
       check string "pubkey matches" "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d" event.Nostr_event.pubkey;
       check int "kind is 24242" 24242 event.Nostr_event.kind;
       check string "id matches" "f5f352b3633d79a37d1e5b49d5d440b6e507683aa59517c70c07b08e7ac0a1be" event.Nostr_event.id
-  | Error msg -> fail (Printf.sprintf "Failed to parse valid header: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+  | Error msg -> fail (Printf.sprintf "Failed to parse valid header: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
 
 let test_validate_auth_valid_event1 () =
   let encoded = Base64.encode_exn event1_json in
@@ -109,7 +109,7 @@ let test_validate_auth_valid_event1 () =
   match Auth.validate_auth ~header ~action:Auth.Upload ~current_time:event1_valid_time with
   | Ok pubkey ->
       check string "pubkey matches" "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d" pubkey
-  | Error msg -> fail (Printf.sprintf "Validation failed: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+  | Error msg -> fail (Printf.sprintf "Validation failed: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
 
 let test_validate_auth_valid_event2 () =
   let encoded = Base64.encode_exn event2_json in
@@ -117,7 +117,7 @@ let test_validate_auth_valid_event2 () =
   match Auth.validate_auth ~header ~action:Auth.Download ~current_time:event2_valid_time with
   | Ok pubkey ->
       check string "pubkey matches" "b5f07faa8d3529f03bd898a23dfb3257bab8d8f5490777c46076ff9647e205dc" pubkey
-  | Error msg -> fail (Printf.sprintf "Validation failed: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+  | Error msg -> fail (Printf.sprintf "Validation failed: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
 
 let test_validate_auth_wrong_action () =
   let encoded = Base64.encode_exn event1_json in
@@ -150,7 +150,7 @@ let test_validate_delete_auth_valid () =
   match Auth.validate_delete_auth ~header ~sha256:delete_target_sha256 ~current_time:delete_valid_time with
   | Ok pubkey ->
       check string "pubkey matches" "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d" pubkey
-  | Error msg -> fail (Printf.sprintf "Delete validation failed: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+  | Error msg -> fail (Printf.sprintf "Delete validation failed: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
 
 let test_validate_delete_auth_wrong_hash () =
   let encoded = Base64.encode_exn delete_event_json in
@@ -158,9 +158,9 @@ let test_validate_delete_auth_wrong_hash () =
   let wrong_sha256 = "0000000000000000000000000000000000000000000000000000000000000000" in
   match Auth.validate_delete_auth ~header ~sha256:wrong_sha256 ~current_time:delete_valid_time with
   | Ok _ -> fail "Should have failed with wrong sha256"
-  | Error (Domain.Storage_error msg) ->
+  | Error (Domain.Auth_error msg) ->
       check bool "error message mentions x tag" true (String.length msg > 0)
-  | Error _ -> fail "Expected Storage_error"
+  | Error _ -> fail "Expected Auth_error"
 
 let test_validate_delete_auth_expired () =
   let encoded = Base64.encode_exn delete_event_json in
@@ -190,7 +190,7 @@ let test_validate_upload_auth_x_tag_match () =
   let encoded = Base64.encode_exn upload_event_with_x_tag_json in
   let header = "Nostr " ^ encoded in
   match Auth.parse_auth_header header with
-  | Error msg -> fail (Printf.sprintf "Failed to parse header: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+  | Error msg -> fail (Printf.sprintf "Failed to parse header: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
   | Ok event ->
       (* Verify x tag contains the expected hash *)
       let x_tags = Nostr_event.find_all_tags event "x" in
@@ -225,7 +225,7 @@ let test_validate_x_tag_success () =
   | Ok event ->
       match Auth.validate_x_tag event ~sha256:upload_target_sha256 with
       | Ok () -> () (* Expected success *)
-      | Error msg -> fail (Printf.sprintf "Should have succeeded: %s" (match msg with Domain.Storage_error s -> s | _ -> "Unknown error"))
+      | Error msg -> fail (Printf.sprintf "Should have succeeded: %s" (match msg with Domain.Auth_error s -> s | _ -> "Unknown error"))
 
 let test_validate_x_tag_failure () =
   let encoded = Base64.encode_exn upload_event_with_x_tag_json in
@@ -236,9 +236,9 @@ let test_validate_x_tag_failure () =
   | Ok event ->
       match Auth.validate_x_tag event ~sha256:wrong_sha256 with
       | Ok () -> fail "Should have failed with wrong sha256"
-      | Error (Domain.Storage_error msg) ->
+      | Error (Domain.Auth_error msg) ->
           check bool "error mentions x tag" true (String.length msg > 0)
-      | Error _ -> fail "Expected Storage_error"
+      | Error _ -> fail "Expected Auth_error"
 
 let test_validate_x_tag_missing () =
   let encoded = Base64.encode_exn upload_event_no_x_tag_json in
@@ -248,9 +248,9 @@ let test_validate_x_tag_missing () =
   | Ok event ->
       match Auth.validate_x_tag event ~sha256:upload_target_sha256 with
       | Ok () -> fail "Should have failed with missing x tag"
-      | Error (Domain.Storage_error msg) ->
+      | Error (Domain.Auth_error msg) ->
           check bool "error mentions x tag" true (String.length msg > 0)
-      | Error _ -> fail "Expected Storage_error"
+      | Error _ -> fail "Expected Auth_error"
 
 let tests = [
   test_case "parse_auth_header valid" `Quick test_parse_auth_header_valid;
