@@ -54,7 +54,7 @@ jobs:
         run: |
           export LD_PRELOAD=${{ steps.secp.outputs.path }}
           export BLOSSOM_BASE_URL=http://localhost:3000
-          opam exec -- dune exec e2e
+          opam exec -- dune exec e2e/main.exe
 
       - name: Stop Blossom server
         if: always()
