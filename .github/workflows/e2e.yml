@@ -45,7 +45,7 @@ jobs:
           LD_PRELOAD: ${{ steps.secp.outputs.path }}
         run: |
           mkdir -p /tmp/blossom-data
-          opam exec -- dune exec ocaml-nostr-blossom -- \
+          opam exec -- dune exec blossoML -- \
             --port 3000 \
             --data-dir /tmp/blossom-data > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
