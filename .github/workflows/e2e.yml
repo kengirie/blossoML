@@ -51,9 +51,11 @@ jobs:
           echo $! > /tmp/server.pid
           echo "Server PID: $(cat /tmp/server.pid)"
           # Wait for server to be ready
+          SERVER_READY=false
           for i in {1..30}; do
             if curl -s http://localhost:3000/ > /dev/null 2>&1; then
               echo "Server is ready"
+              SERVER_READY=true
               break
             fi
             echo "Waiting for server... ($i)"
@@ -62,6 +64,11 @@ jobs:
           # Show server log
           echo "=== Server log ==="
           cat /tmp/server.log || true
+          # Fail if server didn't start
+          if [ "$SERVER_READY" != "true" ]; then
+            echo "ERROR: Server failed to start"
+            exit 1
+          fi
 
       - name: Run E2E tests
         env:
