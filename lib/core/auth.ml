@@ -50,19 +50,19 @@ let validate_blossom_event (event : Nostr_event.t) ~action ~current_time =
     match Nostr_event.find_tag event "expiration" with
     | None -> Error (Domain.Auth_error "Missing expiration tag")
     | Some exp_str ->
-        (try
-          let expiration = Int64.of_string exp_str in
-          if expiration <= current_time then
-            Error (Domain.Auth_error "Event has expired")
-          else
-            match Nostr_event.find_tag event "t" with
-            | None -> Error (Domain.Auth_error "Missing t tag")
-            | Some t_value ->
-                if t_value <> action_to_string action then
-                  Error (Domain.Auth_error (Printf.sprintf "Invalid action, expected %s" (action_to_string action)))
-                else
-                  Ok ()
-        with _ -> Error (Domain.Auth_error "Invalid expiration timestamp"))
+        match Int64.of_string_opt exp_str with
+        | None -> Error (Domain.Auth_error "Invalid expiration timestamp")
+        | Some expiration ->
+            if expiration <= current_time then
+              Error (Domain.Auth_error "Event has expired")
+            else
+              match Nostr_event.find_tag event "t" with
+              | None -> Error (Domain.Auth_error "Missing t tag")
+              | Some t_value ->
+                  if t_value <> action_to_string action then
+                    Error (Domain.Auth_error (Printf.sprintf "Invalid action, expected %s" (action_to_string action)))
+                  else
+                    Ok ()
 
 (* Verify event using Nostr_event, returning Domain.error *)
 let verify_event (event : Nostr_event.t) =
