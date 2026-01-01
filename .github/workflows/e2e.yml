@@ -51,10 +51,10 @@ jobs:
           sleep 3
 
       - name: Run E2E tests
-        run: |
-          export LD_PRELOAD=${{ steps.secp.outputs.path }}
-          export BLOSSOM_BASE_URL=http://localhost:3000
-          opam exec -- dune exec e2e/main.exe
+        env:
+          LD_PRELOAD: ${{ steps.secp.outputs.path }}
+          E2E_BASE_URL: http://localhost:3000
+        run: opam exec -- dune exec e2e/main.exe
 
       - name: Stop Blossom server
         if: always()

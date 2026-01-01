@@ -244,7 +244,7 @@ let test_delete ~sw ~env =
       (* Verify file is gone *)
       let get_result = Http_client.get ~sw ~env ~url:delete_url () in
       match get_result with
-      | Error _ -> () (* Connection error is also acceptable *)
+      | Error e -> failwith ("GET after delete failed unexpectedly: " ^ e)
       | Ok get_response ->
         if get_response.status <> 404 then
           failwith (Printf.sprintf "Expected 404 after delete, got %d" get_response.status)
