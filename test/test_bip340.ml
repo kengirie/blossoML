@@ -10,13 +10,33 @@ let event2_id = "d9484f18533d5e36f000f902a45b15a7eecf5fbfcb046789756d57ea87115dc
 let event2_pubkey = "b5f07faa8d3529f03bd898a23dfb3257bab8d8f5490777c46076ff9647e205dc"
 let event2_signature = "e402ade78e1714d40cd6bd3091bc5f4ada8e904e90301b5a2b9b5f0b6e95ce908d4f22b15e9fb86f8268a2131f8adbb3d1f0e7e7afd1ab0f4f08acb15822a999"
 
+(* Helper to check result is Ok *)
+let is_ok = function Ok () -> true | Error _ -> false
+
+(* Helper to check result is specific error *)
+let is_error_signature_failed = function
+  | Error Bip340.Signature_verification_failed -> true
+  | _ -> false
+
+let is_error_pubkey_parse_failed = function
+  | Error Bip340.Pubkey_parse_failed -> true
+  | _ -> false
+
+let is_error_invalid_length = function
+  | Error (Bip340.Invalid_length _) -> true
+  | _ -> false
+
+let is_error_invalid_hex = function
+  | Error (Bip340.Invalid_hex _) -> true
+  | _ -> false
+
 let test_verify_valid_event1 () =
   let result = Bip340.verify
     ~pubkey:event1_pubkey
     ~msg:event1_id
     ~signature:event1_signature
   in
-  check bool "verification should succeed" true result
+  check bool "verification should succeed" true (is_ok result)
 
 let test_verify_valid_event2 () =
   let result = Bip340.verify
@@ -24,7 +44,7 @@ let test_verify_valid_event2 () =
     ~msg:event2_id
     ~signature:event2_signature
   in
-  check bool "verification should succeed" true result
+  check bool "verification should succeed" true (is_ok result)
 
 let test_verify_invalid_signature () =
   (* Use event1 but tamper with signature *)
@@ -34,7 +54,7 @@ let test_verify_invalid_signature () =
     ~msg:event1_id
     ~signature:invalid_sig
   in
-  check bool "verification should fail" false result
+  check bool "verification should fail with signature error" true (is_error_signature_failed result)
 
 let test_verify_invalid_msg () =
   (* Use event1 but tamper with msg (id) *)
@@ -44,17 +64,48 @@ let test_verify_invalid_msg () =
     ~msg:invalid_msg
     ~signature:event1_signature
   in
-  check bool "verification should fail" false result
+  check bool "verification should fail with signature error" true (is_error_signature_failed result)
 
 let test_verify_invalid_pubkey () =
-  (* Use event1 but tamper with pubkey *)
+  (* Use event1 but tamper with pubkey - still valid hex, just wrong key *)
   let invalid_pubkey = String.map (fun c -> if c = 'e' then 'f' else c) event1_pubkey in
   let result = Bip340.verify
     ~pubkey:invalid_pubkey
     ~msg:event1_id
     ~signature:event1_signature
   in
-  check bool "verification should fail" false result
+  (* Tampered pubkey may fail at parse or verification depending on the value *)
+  check bool "verification should fail" true (not (is_ok result))
+
+let test_verify_invalid_hex_pubkey () =
+  (* Invalid hex characters in pubkey *)
+  let invalid_pubkey = "zz279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d" in
+  let result = Bip340.verify
+    ~pubkey:invalid_pubkey
+    ~msg:event1_id
+    ~signature:event1_signature
+  in
+  check bool "should fail with invalid hex error" true (is_error_invalid_hex result)
+
+let test_verify_wrong_length_pubkey () =
+  (* Wrong length pubkey *)
+  let short_pubkey = "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd4924" in
+  let result = Bip340.verify
+    ~pubkey:short_pubkey
+    ~msg:event1_id
+    ~signature:event1_signature
+  in
+  check bool "should fail with invalid length error" true (is_error_invalid_length result)
+
+let test_verify_wrong_length_signature () =
+  (* Wrong length signature *)
+  let short_sig = "81637f697529ecd7a84029a5b620ec63f56731505df440c2b23a3b6a383d73a6" in
+  let result = Bip340.verify
+    ~pubkey:event1_pubkey
+    ~msg:event1_id
+    ~signature:short_sig
+  in
+  check bool "should fail with invalid length error" true (is_error_invalid_length result)
 
 let tests = [
   test_case "verify valid event 1" `Quick test_verify_valid_event1;
@@ -62,4 +113,7 @@ let tests = [
   test_case "verify invalid signature" `Quick test_verify_invalid_signature;
   test_case "verify invalid msg" `Quick test_verify_invalid_msg;
   test_case "verify invalid pubkey" `Quick test_verify_invalid_pubkey;
+  test_case "verify invalid hex pubkey" `Quick test_verify_invalid_hex_pubkey;
+  test_case "verify wrong length pubkey" `Quick test_verify_wrong_length_pubkey;
+  test_case "verify wrong length signature" `Quick test_verify_wrong_length_signature;
 ]

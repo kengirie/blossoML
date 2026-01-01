@@ -15,6 +15,12 @@ type t = {
   sig_ : string;
 }
 
+type signature_error =
+  | Invalid_id_format
+  | Invalid_pubkey_format
+  | Invalid_signature_format
+  | Signature_mismatch
+
 (** Escape a string according to JSON rules.
     This handles: newline, carriage return, tab, backspace, formfeed,
     backslash, double quote, and control characters. *)
@@ -99,19 +105,30 @@ let find_all_tags event tag_name =
       | _ -> None)
 
 (** Verify the BIP-340 signature of an event.
-    Returns true if the signature is valid. *)
-let verify_signature event =
+    Returns Ok () if the signature is valid, Error with reason otherwise. *)
+let verify_signature event : (unit, signature_error) result =
   if String.length event.id <> 64 then
-    false
+    Error Invalid_id_format
   else if String.length event.pubkey <> 64 then
-    false
+    Error Invalid_pubkey_format
   else if String.length event.sig_ <> 128 then
-    false
+    Error Invalid_signature_format
   else
-    try
-      Bip340.verify ~pubkey:event.pubkey ~msg:event.id ~signature:event.sig_
-    with _ -> false
+    match Bip340.verify ~pubkey:event.pubkey ~msg:event.id ~signature:event.sig_ with
+    | Ok () -> Ok ()
+    | Error (Bip340.Invalid_hex { field; value = _ }) ->
+        (match field with
+         | "pubkey" -> Error Invalid_pubkey_format
+         | "msg" -> Error Invalid_id_format
+         | _ -> Error Invalid_signature_format)
+    | Error (Bip340.Invalid_length { field; expected = _; actual = _ }) ->
+        (match field with
+         | "pubkey" -> Error Invalid_pubkey_format
+         | "msg" -> Error Invalid_id_format
+         | _ -> Error Invalid_signature_format)
+    | Error Bip340.Pubkey_parse_failed -> Error Invalid_pubkey_format
+    | Error Bip340.Signature_verification_failed -> Error Signature_mismatch
 
 (** Fully verify an event: ID matches content and signature is valid. *)
 let verify event =
-  verify_id event && verify_signature event
+  verify_id event && Result.is_ok (verify_signature event)

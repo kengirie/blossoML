@@ -68,10 +68,17 @@ let validate_blossom_event (event : Nostr_event.t) ~action ~current_time =
 let verify_event (event : Nostr_event.t) =
   if not (Nostr_event.verify_id event) then
     Error (Domain.Auth_error "Event ID does not match computed hash")
-  else if not (Nostr_event.verify_signature event) then
-    Error (Domain.Auth_error "Invalid signature")
   else
-    Ok ()
+    match Nostr_event.verify_signature event with
+    | Ok () -> Ok ()
+    | Error Nostr_event.Invalid_id_format ->
+        Error (Domain.Auth_error "Invalid event ID format")
+    | Error Nostr_event.Invalid_pubkey_format ->
+        Error (Domain.Auth_error "Invalid pubkey format")
+    | Error Nostr_event.Invalid_signature_format ->
+        Error (Domain.Auth_error "Invalid signature format")
+    | Error Nostr_event.Signature_mismatch ->
+        Error (Domain.Auth_error "Invalid signature")
 
 let validate_auth ~header ~action ~current_time =
   match parse_auth_header header with

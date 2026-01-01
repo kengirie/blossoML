@@ -174,18 +174,22 @@ let test_find_all_tags_x () =
 
 (* Test verify_signature *)
 let test_verify_signature_valid_event1 () =
-  check bool "event1 signature valid" true (Nostr_event.verify_signature event1)
+  check bool "event1 signature valid" true (Result.is_ok (Nostr_event.verify_signature event1))
 
 let test_verify_signature_valid_event2 () =
-  check bool "event2 signature valid" true (Nostr_event.verify_signature event2)
+  check bool "event2 signature valid" true (Result.is_ok (Nostr_event.verify_signature event2))
 
 let test_verify_signature_tampered_sig () =
   let tampered = { event1 with sig_ = "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" } in
-  check bool "tampered sig should fail" false (Nostr_event.verify_signature tampered)
+  match Nostr_event.verify_signature tampered with
+  | Ok () -> check bool "tampered sig should fail" true false
+  | Error _ -> check bool "tampered sig should fail" true true
 
 let test_verify_signature_wrong_length () =
   let short_sig = { event1 with sig_ = "abc" } in
-  check bool "short sig should fail" false (Nostr_event.verify_signature short_sig)
+  match Nostr_event.verify_signature short_sig with
+  | Error Nostr_event.Invalid_signature_format -> check bool "short sig should fail" true true
+  | _ -> check bool "short sig should fail with Invalid_signature_format" true false
 
 (* Test verify (full verification: id + signature) *)
 let test_verify_valid_event1 () =
