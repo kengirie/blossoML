@@ -1,4 +1,5 @@
 let () =
+  Random.self_init ();
   Alcotest.run "Blossom Core" [
     "Integrity", Test_integrity.tests;
     "Policy", Test_policy.tests;
@@ -8,4 +9,5 @@ let () =
     "Mime_detect", Test_mime_detect.tests;
     "Content_type", Test_content_type.tests;
     "Nostr_event", Test_nostr_event.tests;
+    "Nostr_signer", Test_nostr_signer.tests;
   ]

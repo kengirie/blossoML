@@ -1,0 +1,16 @@
+(library
+ (name e2e)
+ (modules config nostr_signer http_client test_upload)
+ (libraries
+  blossoML.core
+  piaf
+  eio
+  eio_main
+  base64
+  yojson
+  digestif))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries e2e))

@@ -125,6 +125,22 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
          | Error e -> Error e
          | Ok false -> Error (Domain.Blob_not_found sha256)
          | Ok true -> Ok metadata)
+    | Error (Domain.Blob_not_found _) ->
+        (* DBにない場合もファイルがあればメタデータを返す（後方互換性） *)
+        (match Storage.exists storage ~path:sha256 with
+         | Error e -> Error e
+         | Ok false -> Error (Domain.Blob_not_found sha256)
+         | Ok true ->
+             match Storage.stat storage ~path:sha256 with
+             | Error e -> Error e
+             | Ok size ->
+                 Ok {
+                   Domain.sha256 = sha256;
+                   size;
+                   mime_type = "application/octet-stream";
+                   uploaded = 0L;
+                   url = "/";
+                 })
     | Error e -> Error e
 
   let delete ~storage ~db ~sha256 ~pubkey =

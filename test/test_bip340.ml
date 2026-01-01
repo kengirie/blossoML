@@ -107,6 +107,79 @@ let test_verify_wrong_length_signature () =
   in
   check bool "should fail with invalid length error" true (is_error_invalid_length result)
 
+(* ===== Sign function tests ===== *)
+
+(* Test vector: known secret key for testing *)
+let test_secret_key = "0000000000000000000000000000000000000000000000000000000000000001"
+
+let is_sign_ok = function Ok _ -> true | Error _ -> false
+
+let is_sign_error_secret_key_length = function
+  | Error (Bip340.Sign_invalid_secret_key_length _) -> true
+  | _ -> false
+
+let is_sign_error_msg_length = function
+  | Error (Bip340.Sign_invalid_msg_length _) -> true
+  | _ -> false
+
+let test_sign_and_verify () =
+  (* Sign a message and verify the signature *)
+  let msg = "0000000000000000000000000000000000000000000000000000000000000000" in
+  match Bip340.sign ~secret_key:test_secret_key ~msg with
+  | Error _ -> fail "signing should succeed"
+  | Ok (signature, pubkey) ->
+    (* Verify the signature *)
+    let verify_result = Bip340.verify ~pubkey ~msg ~signature in
+    check bool "verification of signed message should succeed" true (is_ok verify_result)
+
+let test_sign_produces_consistent_pubkey () =
+  (* Signing with the same secret key should always produce the same pubkey *)
+  let msg1 = "1111111111111111111111111111111111111111111111111111111111111111" in
+  let msg2 = "2222222222222222222222222222222222222222222222222222222222222222" in
+  match Bip340.sign ~secret_key:test_secret_key ~msg:msg1 with
+  | Error _ -> fail "first signing should succeed"
+  | Ok (_, pubkey1) ->
+    match Bip340.sign ~secret_key:test_secret_key ~msg:msg2 with
+    | Error _ -> fail "second signing should succeed"
+    | Ok (_, pubkey2) ->
+      check string "pubkeys should match" pubkey1 pubkey2
+
+let test_sign_different_msgs_different_sigs () =
+  (* Different messages should produce different signatures *)
+  let msg1 = "1111111111111111111111111111111111111111111111111111111111111111" in
+  let msg2 = "2222222222222222222222222222222222222222222222222222222222222222" in
+  match Bip340.sign ~secret_key:test_secret_key ~msg:msg1 with
+  | Error _ -> fail "first signing should succeed"
+  | Ok (sig1, _) ->
+    match Bip340.sign ~secret_key:test_secret_key ~msg:msg2 with
+    | Error _ -> fail "second signing should succeed"
+    | Ok (sig2, _) ->
+      check bool "signatures should be different" true (sig1 <> sig2)
+
+let test_sign_invalid_secret_key_length () =
+  let short_key = "00000000000000000000000000000000" in (* 32 chars, not 64 *)
+  let msg = "0000000000000000000000000000000000000000000000000000000000000000" in
+  let result = Bip340.sign ~secret_key:short_key ~msg in
+  check bool "should fail with secret key length error" true (is_sign_error_secret_key_length result)
+
+let test_sign_invalid_msg_length () =
+  let msg = "00000000000000000000000000000000" in (* 32 chars, not 64 *)
+  let result = Bip340.sign ~secret_key:test_secret_key ~msg in
+  check bool "should fail with msg length error" true (is_sign_error_msg_length result)
+
+let test_sign_with_real_event_id () =
+  (* Use a real event ID as the message *)
+  let msg = event1_id in
+  match Bip340.sign ~secret_key:test_secret_key ~msg with
+  | Error _ -> fail "signing should succeed"
+  | Ok (signature, pubkey) ->
+    (* Verify length *)
+    check int "signature length" 128 (String.length signature);
+    check int "pubkey length" 64 (String.length pubkey);
+    (* Verify the signature *)
+    let verify_result = Bip340.verify ~pubkey ~msg ~signature in
+    check bool "verification should succeed" true (is_ok verify_result)
+
 let tests = [
   test_case "verify valid event 1" `Quick test_verify_valid_event1;
   test_case "verify valid event 2" `Quick test_verify_valid_event2;
@@ -116,4 +189,11 @@ let tests = [
   test_case "verify invalid hex pubkey" `Quick test_verify_invalid_hex_pubkey;
   test_case "verify wrong length pubkey" `Quick test_verify_wrong_length_pubkey;
   test_case "verify wrong length signature" `Quick test_verify_wrong_length_signature;
+  (* Sign function tests *)
+  test_case "sign and verify" `Quick test_sign_and_verify;
+  test_case "sign produces consistent pubkey" `Quick test_sign_produces_consistent_pubkey;
+  test_case "sign different msgs different sigs" `Quick test_sign_different_msgs_different_sigs;
+  test_case "sign invalid secret key length" `Quick test_sign_invalid_secret_key_length;
+  test_case "sign invalid msg length" `Quick test_sign_invalid_msg_length;
+  test_case "sign with real event id" `Quick test_sign_with_real_event_id;
 ]

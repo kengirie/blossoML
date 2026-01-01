@@ -1,0 +1,64 @@
+name: E2E Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.2"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev libffi-dev pkg-config libsqlite3-dev libsecp256k1-dev
+
+      - name: Add opam repositories
+        run: |
+          opam repo add --all --set-default default git+https://github.com/ocaml/opam-repository.git
+
+      - name: Install dependencies
+        run: opam install . --deps-only --with-test -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Find libsecp256k1
+        id: secp
+        run: |
+          SECP_LIB=$(find /usr -name "libsecp256k1.so*" -type f 2>/dev/null | head -1)
+          echo "path=$SECP_LIB" >> $GITHUB_OUTPUT
+
+      - name: Start Blossom server
+        run: |
+          mkdir -p /tmp/blossom-data
+          export LD_PRELOAD=${{ steps.secp.outputs.path }}
+          opam exec -- dune exec ocaml-nostr-blossom -- \
+            --port 3000 \
+            --data-dir /tmp/blossom-data &
+          echo $! > /tmp/server.pid
+          sleep 3
+
+      - name: Run E2E tests
+        run: |
+          export LD_PRELOAD=${{ steps.secp.outputs.path }}
+          export BLOSSOM_BASE_URL=http://localhost:3000
+          opam exec -- dune exec e2e
+
+      - name: Stop Blossom server
+        if: always()
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill $(cat /tmp/server.pid) 2>/dev/null || true
+          fi

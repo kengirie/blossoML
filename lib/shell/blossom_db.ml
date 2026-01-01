@@ -53,7 +53,7 @@ module Db = struct
     @@ {sql|
       INSERT INTO blobs (sha256, uploaded_at, mime_type, size)
       VALUES ($1, strftime('%s', 'now'), $2, $3)
-      ON CONFLICT(sha256) DO NOTHING
+      ON CONFLICT(sha256) DO UPDATE SET status = 'stored', uploaded_at = strftime('%s', 'now')
     |sql}
 
   let get_blob =
