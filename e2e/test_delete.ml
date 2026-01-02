@@ -181,8 +181,8 @@ let test_delete_not_found ~sw ~env =
   match result with
   | Error e -> failwith ("Request failed unexpectedly: " ^ e)
   | Ok response ->
-    if response.status <> 403 then
-      failwith (Printf.sprintf "Expected 403 for non-existent file (not owner), got %d" response.status)
+    if response.status <> 404 then
+      failwith (Printf.sprintf "Expected 404 for non-existent file, got %d" response.status)
 
 (** All tests *)
 let tests = [

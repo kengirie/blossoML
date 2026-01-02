@@ -144,18 +144,31 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
     | Error e -> Error e
 
   let delete ~storage ~db ~sha256 ~pubkey =
-    (* 1. 所有者かどうか確認 *)
-    match Db.has_owner db ~sha256 ~pubkey with
+    (* 1. まずBlobが存在するか確認（存在しない場合は404） *)
+    match Db.get db ~sha256 with
+    | Error (Domain.Blob_not_found _) ->
+        (* DBにない場合もファイルがあるか確認（後方互換性） *)
+        (match Storage.exists storage ~path:sha256 with
+         | Error e -> Error e
+         | Ok false -> Error (Domain.Blob_not_found sha256)
+         | Ok true ->
+             (* ファイルはあるがDBにない場合は削除を許可（orphaned file） *)
+             let _ = Storage.unlink storage ~path:sha256 in
+             Ok ())
     | Error e -> Error e
-    | Ok false ->
-        (* 所有者でない場合は拒否 *)
-        Error (Domain.Forbidden "Not authorized to delete this blob")
-    | Ok true ->
-        (* 2. 所有関係を削除 *)
+    | Ok _ ->
+        (* 2. 所有者かどうか確認 *)
+        match Db.has_owner db ~sha256 ~pubkey with
+        | Error e -> Error e
+        | Ok false ->
+            (* 所有者でない場合は拒否 *)
+            Error (Domain.Forbidden "Not authorized to delete this blob")
+        | Ok true ->
+        (* 3. 所有関係を削除 *)
         match Db.remove_owner db ~sha256 ~pubkey with
         | Error e -> Error e
         | Ok () ->
-            (* 3. 残りの所有者数を確認 *)
+            (* 4. 残りの所有者数を確認 *)
             match Db.count_owners db ~sha256 with
             | Error e -> Error e
             | Ok count when count > 0 ->
