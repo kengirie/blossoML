@@ -102,3 +102,112 @@ let to_auth_header event =
   let json = event_to_json event in
   let encoded = Base64.encode_string json in
   "Nostr " ^ encoded
+
+(** Create an upload auth event with invalid signature *)
+let create_upload_auth_invalid_sig ~keypair ~sha256 ~created_at ~expiration =
+  let event = create_upload_auth ~keypair ~sha256 ~created_at ~expiration in
+  (* Replace signature with invalid one (flip some bits) *)
+  let invalid_sig = String.mapi (fun i c ->
+    if i = 0 then (if c = 'a' then 'b' else 'a')
+    else c
+  ) event.Nostr_event.sig_ in
+  { event with Nostr_event.sig_ = invalid_sig }
+
+(** Create an upload auth event with invalid pubkey *)
+let create_upload_auth_invalid_pubkey ~keypair ~sha256 ~created_at ~expiration =
+  let created_at = Int64.of_float created_at in
+  (* use non-hex chars so pubkey parsing fails while the event remains internally consistent *)
+  let invalid_pubkey = String.make 64 'g' in
+  let tags = [
+    ["t"; "upload"];
+    ["x"; sha256];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "Upload file" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id ~pubkey:invalid_pubkey ~created_at ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = invalid_pubkey; created_at; kind; tags; content; sig_ }
+
+(** Create an upload auth event with wrong t tag (not "upload") *)
+let create_upload_auth_wrong_t_tag ~keypair ~sha256 ~created_at ~expiration =
+  let created_at = Int64.of_float created_at in
+  let tags = [
+    ["t"; "download"];  (* wrong tag *)
+    ["x"; sha256];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "Upload file" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id ~pubkey:keypair.pubkey ~created_at ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
+(** Create an upload auth event with mismatched sha256 (x tag) *)
+let create_upload_auth_wrong_sha256 ~keypair ~created_at ~expiration =
+  let created_at = Int64.of_float created_at in
+  let wrong_sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" in
+  let tags = [
+    ["t"; "upload"];
+    ["x"; wrong_sha256];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "Upload file" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id ~pubkey:keypair.pubkey ~created_at ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
+(** Create an upload auth event without expiration tag *)
+let create_upload_auth_no_expiration ~keypair ~sha256 ~created_at =
+  let created_at = Int64.of_float created_at in
+  let tags = [
+    ["t"; "upload"];
+    ["x"; sha256];
+    (* no expiration tag *)
+  ] in
+  let content = "Upload file" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id ~pubkey:keypair.pubkey ~created_at ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
+(** Create an upload auth event with wrong kind (not 24242) *)
+let create_upload_auth_wrong_kind ~keypair ~sha256 ~created_at ~expiration =
+  let created_at = Int64.of_float created_at in
+  let tags = [
+    ["t"; "upload"];
+    ["x"; sha256];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "Upload file" in
+  let kind = 1 in  (* wrong kind *)
+  let id = Nostr_event.compute_id ~pubkey:keypair.pubkey ~created_at ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
+(** Create an upload auth event with future created_at *)
+let create_upload_auth_future_created_at ~keypair ~sha256 ~expiration =
+  let future_time = Int64.of_float (Unix.time () +. 3600.) in  (* 1 hour in future *)
+  let tags = [
+    ["t"; "upload"];
+    ["x"; sha256];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "Upload file" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id ~pubkey:keypair.pubkey ~created_at:future_time ~kind ~tags ~content in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at = future_time; kind; tags; content; sig_ }

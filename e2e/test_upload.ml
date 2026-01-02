@@ -263,11 +263,296 @@ let test_download_not_found ~sw ~env =
     if response.status <> 404 then
       failwith (Printf.sprintf "Expected 404, got %d" response.status)
 
+(** Test: Upload with invalid signature should fail with 401 *)
+let test_upload_with_invalid_signature ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for invalid signature" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth_invalid_sig ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for invalid signature, got %d" response.status)
+
+(** Test: Upload with invalid pubkey should fail with 401 *)
+let test_upload_with_invalid_pubkey ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for invalid pubkey" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth_invalid_pubkey ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for invalid pubkey, got %d" response.status)
+
+(** Test: Upload with invalid JSON in auth header should fail with 401 *)
+let test_upload_with_invalid_json ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "Test content for invalid JSON" in
+  let upload_url = base_url ^ "/upload" in
+
+  (* Create invalid JSON and base64 encode it *)
+  let invalid_json = "{invalid json" in
+  let auth_header = "Nostr " ^ Base64.encode_string invalid_json in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for invalid JSON, got %d" response.status)
+
+(** Test: Upload with non-base64 auth header should fail with 401 *)
+let test_upload_with_invalid_base64 ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "Test content for invalid base64" in
+  let upload_url = base_url ^ "/upload" in
+
+  (* Non-base64 characters *)
+  let auth_header = "Nostr !!!not-valid-base64!!!" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for invalid base64, got %d" response.status)
+
+(** Test: Upload with wrong t tag should fail with 401 *)
+let test_upload_with_wrong_t_tag ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for wrong t tag" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth_wrong_t_tag ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for wrong t tag, got %d" response.status)
+
+(** Test: Upload with sha256 mismatch should fail with 401 *)
+let test_upload_with_sha256_mismatch ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for sha256 mismatch" in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  (* Auth event has wrong sha256 *)
+  let auth_event = Nostr_signer.create_upload_auth_wrong_sha256 ~keypair ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for sha256 mismatch, got %d" response.status)
+
+(** Test: Upload without expiration tag should fail with 401 *)
+let test_upload_without_expiration ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content without expiration" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let auth_event = Nostr_signer.create_upload_auth_no_expiration ~keypair ~sha256 ~created_at:now in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for missing expiration, got %d" response.status)
+
+(** Test: Upload with wrong kind should fail with 401 *)
+let test_upload_with_wrong_kind ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for wrong kind" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth_wrong_kind ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for wrong kind, got %d" response.status)
+
+(** Test: Upload with future created_at should fail with 401 *)
+let test_upload_with_future_created_at ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Test content for future created_at" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 7200.) in
+  let auth_event = Nostr_signer.create_upload_auth_future_created_at ~keypair ~sha256 ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 401 then
+      failwith (Printf.sprintf "Expected 401 for future created_at, got %d" response.status)
+
 (** All tests *)
 let tests = [
   ("upload and download", test_upload_and_download);
   ("upload without auth", test_upload_without_auth);
   ("upload with expired auth", test_upload_with_expired_auth);
+  ("upload with invalid signature", test_upload_with_invalid_signature);
+  ("upload with invalid pubkey", test_upload_with_invalid_pubkey);
+  ("upload with invalid JSON", test_upload_with_invalid_json);
+  ("upload with invalid base64", test_upload_with_invalid_base64);
+  ("upload with wrong t tag", test_upload_with_wrong_t_tag);
+  ("upload with sha256 mismatch", test_upload_with_sha256_mismatch);
+  ("upload without expiration", test_upload_without_expiration);
+  ("upload with wrong kind", test_upload_with_wrong_kind);
+  ("upload with future created_at", test_upload_with_future_created_at);
   ("HEAD request", test_head_request);
   ("delete", test_delete);
   ("download not found", test_download_not_found);
