@@ -539,6 +539,310 @@ let test_upload_with_future_created_at ~sw ~env =
     if response.status <> 401 then
       failwith (Printf.sprintf "Expected 401 for future created_at, got %d" response.status)
 
+(** Test: Upload empty file *)
+let test_upload_empty_file ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "application/octet-stream");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Upload returned status %d: %s" response.status response.body);
+
+    (* Verify response contains correct sha256 *)
+    let json = Yojson.Safe.from_string response.body in
+    let response_sha256 = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "sha256" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No sha256 in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if response_sha256 <> sha256 then
+      failwith (Printf.sprintf "sha256 mismatch: expected %s, got %s" sha256 response_sha256);
+
+    (* Verify size is 0 *)
+    let size = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "size" fields with
+         | Some (`Int n) -> n
+         | _ -> failwith "No size in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if size <> 0 then
+      failwith (Printf.sprintf "Expected size 0, got %d" size)
+
+(** Test: Upload large file *)
+let test_upload_large_file ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  (* Create a 1MB file *)
+  let content = String.make (1024 * 1024) 'X' in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "application/octet-stream");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Upload returned status %d: %s" response.status response.body);
+
+    (* Verify size *)
+    let json = Yojson.Safe.from_string response.body in
+    let size = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "size" fields with
+         | Some (`Int n) -> n
+         | _ -> failwith "No size in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if size <> 1024 * 1024 then
+      failwith (Printf.sprintf "Expected size %d, got %d" (1024 * 1024) size);
+
+    (* Download and verify content *)
+    let response_sha256 = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "sha256" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No sha256 in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    let download_url = base_url ^ "/" ^ response_sha256 in
+    let download_result = Http_client.get ~sw ~env ~url:download_url () in
+    match download_result with
+    | Error e -> failwith ("Download failed: " ^ e)
+    | Ok dl_response ->
+      if dl_response.status <> 200 then
+        failwith (Printf.sprintf "Download returned status %d" dl_response.status);
+      if dl_response.body <> content then
+        failwith "Downloaded content does not match uploaded content"
+
+(** Test: Upload binary data *)
+let test_upload_binary_data ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  (* Create binary content with all byte values 0-255 *)
+  let content = String.init 256 (fun i -> Char.chr i) in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "application/octet-stream");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Upload returned status %d: %s" response.status response.body);
+
+    (* Download and verify content *)
+    let json = Yojson.Safe.from_string response.body in
+    let response_sha256 = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "sha256" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No sha256 in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    let download_url = base_url ^ "/" ^ response_sha256 in
+    let download_result = Http_client.get ~sw ~env ~url:download_url () in
+    match download_result with
+    | Error e -> failwith ("Download failed: " ^ e)
+    | Ok dl_response ->
+      if dl_response.status <> 200 then
+        failwith (Printf.sprintf "Download returned status %d" dl_response.status);
+      if dl_response.body <> content then
+        failwith "Downloaded binary content does not match uploaded content"
+
+(** Test: Upload same file twice (idempotency) *)
+let test_upload_idempotent ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Idempotent upload test content" in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let upload_url = base_url ^ "/upload" in
+
+  (* First upload *)
+  let auth_event1 = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header1 = Nostr_signer.to_auth_header auth_event1 in
+
+  let result1 = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header1);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  (match result1 with
+  | Error e -> failwith ("First upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "First upload returned status %d" response.status));
+
+  (* Second upload with same content *)
+  let auth_event2 = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header2 = Nostr_signer.to_auth_header auth_event2 in
+
+  let result2 = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header2);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result2 with
+  | Error e -> failwith ("Second upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Second upload returned status %d" response.status);
+
+    (* Verify sha256 is the same *)
+    let json = Yojson.Safe.from_string response.body in
+    let response_sha256 = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "sha256" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No sha256 in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if response_sha256 <> sha256 then
+      failwith (Printf.sprintf "sha256 mismatch on second upload: expected %s, got %s" sha256 response_sha256)
+
+(** Test: Upload same file from different pubkeys *)
+let test_upload_same_file_different_pubkeys ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  let content = "Same content different pubkeys" in
+  let sha256 = sha256_hex content in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let upload_url = base_url ^ "/upload" in
+
+  (* First upload with keypair1 *)
+  let keypair1 = Nostr_signer.generate_keypair () in
+  let auth_event1 = Nostr_signer.create_upload_auth ~keypair:keypair1 ~sha256 ~created_at:now ~expiration in
+  let auth_header1 = Nostr_signer.to_auth_header auth_event1 in
+
+  let result1 = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header1);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  (match result1 with
+  | Error e -> failwith ("First upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "First upload returned status %d" response.status));
+
+  (* Second upload with keypair2 *)
+  let keypair2 = Nostr_signer.generate_keypair () in
+  let auth_event2 = Nostr_signer.create_upload_auth ~keypair:keypair2 ~sha256 ~created_at:now ~expiration in
+  let auth_header2 = Nostr_signer.to_auth_header auth_event2 in
+
+  let result2 = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header2);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result2 with
+  | Error e -> failwith ("Second upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Second upload returned status %d" response.status);
+
+    (* Both uploads should succeed and return same sha256 *)
+    let json = Yojson.Safe.from_string response.body in
+    let response_sha256 = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "sha256" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No sha256 in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if response_sha256 <> sha256 then
+      failwith (Printf.sprintf "sha256 mismatch: expected %s, got %s" sha256 response_sha256)
+
 (** All tests *)
 let tests = [
   ("upload and download", test_upload_and_download);
@@ -553,6 +857,11 @@ let tests = [
   ("upload without expiration", test_upload_without_expiration);
   ("upload with wrong kind", test_upload_with_wrong_kind);
   ("upload with future created_at", test_upload_with_future_created_at);
+  ("upload empty file", test_upload_empty_file);
+  ("upload large file", test_upload_large_file);
+  ("upload binary data", test_upload_binary_data);
+  ("upload idempotent", test_upload_idempotent);
+  ("upload same file different pubkeys", test_upload_same_file_different_pubkeys);
   ("HEAD request", test_head_request);
   ("delete", test_delete);
   ("download not found", test_download_not_found);
