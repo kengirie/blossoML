@@ -27,62 +27,87 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
   (** サイズ超過を示す例外 *)
   exception Size_limit_exceeded of int
 
+  (** 空ファイルのSHA-256ハッシュ（定数） *)
+  let empty_sha256 = Digestif.SHA256.(to_hex (digest_string ""))
+
+  (** 空ファイルを保存する（冪等） *)
+  let save_empty dir =
+    let final_path = Eio.Path.(dir / empty_sha256) in
+    try
+      Eio.Path.with_open_out ~create:(`Or_truncate 0o644) final_path ignore;
+      Ok {
+        Storage_intf.sha256 = empty_sha256;
+        size = 0;
+        first_chunk = None;
+      }
+    with exn ->
+      Error (Domain.Storage_error (Printexc.to_string exn))
+
   let save dir ~body ~max_size =
-    (* 一時ファイル名を生成 *)
-    let temp_id = Printf.sprintf "tmp_%d_%d" (Random.int 1000000) (Random.int 1000000) in
-    let temp_path = Eio.Path.(dir / temp_id) in
+    (* Content-Length: 0 の場合は即座に空ファイル処理（ブロック回避） *)
+    match Piaf.Body.length body with
+    | `Fixed 0L -> save_empty dir
+    | _ ->
+        (* 一時ファイル名を生成 *)
+        let temp_id = Printf.sprintf "tmp_%d_%d" (Random.int 1000000) (Random.int 1000000) in
+        let temp_path = Eio.Path.(dir / temp_id) in
 
-    (* 一時ファイルに書き込みながらハッシュ計算 *)
-    let write_result =
-      try
-        Ok (Eio.Path.with_open_out ~create:(`Or_truncate 0o644) temp_path (fun file ->
-          let init = { ctx = Digestif.SHA256.init (); size = 0; first_chunk = None } in
-          Piaf.Body.fold_string body ~init ~f:(fun state chunk ->
-            let new_size = state.size + String.length chunk in
-            (* サイズ制限チェック *)
-            if new_size > max_size then
-              raise (Size_limit_exceeded new_size);
-            (* ファイルに書き込み *)
-            Eio.Flow.copy_string chunk file;
-            (* 状態を更新 *)
-            {
-              ctx = Digestif.SHA256.feed_string state.ctx chunk;
-              size = new_size;
-              first_chunk = if Option.is_none state.first_chunk then Some chunk else state.first_chunk;
-            }
-          )
-        ))
-      with
-      | Size_limit_exceeded size ->
-          (* サイズ超過時は一時ファイルを削除 *)
-          (try Eio.Path.unlink temp_path with _ -> ());
-          Error (Domain.Payload_too_large (size, max_size))
-      | exn ->
-          (* 一時ファイルを削除 *)
-          (try Eio.Path.unlink temp_path with _ -> ());
-          Error (Domain.Storage_error (Printexc.to_string exn))
-    in
+        (* 一時ファイルに書き込みながらハッシュ計算（ストリーミング） *)
+        let write_result =
+          try
+            Ok (Eio.Path.with_open_out ~create:(`Or_truncate 0o644) temp_path (fun file ->
+              let init = { ctx = Digestif.SHA256.init (); size = 0; first_chunk = None } in
+              Piaf.Body.fold_string body ~init ~f:(fun state chunk ->
+                let new_size = state.size + String.length chunk in
+                (* サイズ制限チェック *)
+                if new_size > max_size then
+                  raise (Size_limit_exceeded new_size);
+                (* ファイルに書き込み *)
+                Eio.Flow.copy_string chunk file;
+                (* 状態を更新 *)
+                {
+                  ctx = Digestif.SHA256.feed_string state.ctx chunk;
+                  size = new_size;
+                  first_chunk = if Option.is_none state.first_chunk then Some chunk else state.first_chunk;
+                }
+              )
+            ))
+          with
+          | Size_limit_exceeded size ->
+              (* サイズ超過時は一時ファイルを削除 *)
+              (try Eio.Path.unlink temp_path with _ -> ());
+              Error (Domain.Payload_too_large (size, max_size))
+          | exn ->
+              (* 一時ファイルを削除 *)
+              (try Eio.Path.unlink temp_path with _ -> ());
+              Error (Domain.Storage_error (Printexc.to_string exn))
+        in
 
-    match write_result with
-    | Error e -> Error e
-    | Ok (Error e) ->
-        (* Piaf.Body.fold_string のエラー *)
-        (try Eio.Path.unlink temp_path with _ -> ());
-        Error (Domain.Storage_error (Piaf.Error.to_string e))
-    | Ok (Ok state) ->
-        let hash = Digestif.SHA256.(to_hex (get state.ctx)) in
-        (* 一時ファイルを最終パスにリネーム *)
-        (try
-          let final_path = Eio.Path.(dir / hash) in
-          Eio.Path.rename temp_path final_path;
-          Ok {
-            Storage_intf.sha256 = hash;
-            size = state.size;
-            first_chunk = state.first_chunk;
-          }
-        with exn ->
-          (try Eio.Path.unlink temp_path with _ -> ());
-          Error (Domain.Storage_error (Printexc.to_string exn)))
+        match write_result with
+        | Error e -> Error e
+        | Ok (Error e) ->
+            (* Piaf.Body.fold_string のエラー *)
+            (try Eio.Path.unlink temp_path with _ -> ());
+            Error (Domain.Storage_error (Piaf.Error.to_string e))
+        | Ok (Ok state) ->
+            (* 空ボディだった場合（Chunked/Unknown で空が送られたケース） *)
+            if state.size = 0 then begin
+              (try Eio.Path.unlink temp_path with _ -> ());
+              save_empty dir
+            end else
+              let hash = Digestif.SHA256.(to_hex (get state.ctx)) in
+              (* 一時ファイルを最終パスにリネーム *)
+              (try
+                let final_path = Eio.Path.(dir / hash) in
+                Eio.Path.rename temp_path final_path;
+                Ok {
+                  Storage_intf.sha256 = hash;
+                  size = state.size;
+                  first_chunk = state.first_chunk;
+                }
+              with exn ->
+                (try Eio.Path.unlink temp_path with _ -> ());
+                Error (Domain.Storage_error (Printexc.to_string exn)))
 
   let get ~sw dir ~path ~size =
     let chunk_size = 16384 in (* 16KB chunks *)
