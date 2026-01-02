@@ -26,9 +26,8 @@ let status_to_int status =
   | `Code code -> code
   | _ -> Status.to_code status
 
-let make_request ~sw ~env ~meth ~url ?(headers=[]) ?body () =
+let make_request_with_body ~sw ~env ~meth ~url ?(headers=[]) ?body () =
   let uri = Uri.of_string url in
-  let body = Option.map Body.of_string body in
   let config = { Config.default with connect_timeout = E2e_config.timeout_seconds } in
   match Client.Oneshot.request ~sw ~config ~meth ~headers ?body env uri with
   | Error e -> Error (Error.to_string e)
@@ -42,6 +41,13 @@ let make_request ~sw ~env ~meth ~url ?(headers=[]) ?body () =
         body = body_str;
       }
 
+let make_request ~sw ~env ~meth ~url ?(headers=[]) ?body () =
+  match body with
+  | None -> make_request_with_body ~sw ~env ~meth ~url ~headers ()
+  | Some body_str ->
+      let body = Body.of_string body_str in
+      make_request_with_body ~sw ~env ~meth ~url ~headers ~body ()
+
 let get ~sw ~env ~url ?(headers=[]) () =
   make_request ~sw ~env ~meth:`GET ~url ~headers ()
 
@@ -53,3 +59,17 @@ let put ~sw ~env ~url ?(headers=[]) ~body () =
 
 let delete ~sw ~env ~url ?(headers=[]) () =
   make_request ~sw ~env ~meth:`DELETE ~url ~headers ()
+
+let options ~sw ~env ~url ?(headers=[]) () =
+  make_request ~sw ~env ~meth:`OPTIONS ~url ~headers ()
+
+let put_streaming ~sw ~env ~url ?(headers=[]) ~chunk_size ~chunks () =
+  let stream, push = Piaf.Stream.create 1 in
+  let chunk = String.make chunk_size 'X' in
+  Eio.Fiber.fork ~sw (fun () ->
+    for _ = 1 to chunks do
+      push (Some chunk)
+    done;
+    push None);
+  let body = Body.of_string_stream stream in
+  make_request_with_body ~sw ~env ~meth:`PUT ~url ~headers ~body ()

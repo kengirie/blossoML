@@ -19,4 +19,10 @@ let () =
   Eio.traceln "Upload Tests:";
   List.iter (run_test ~sw ~env) E2e.Test_upload.tests;
 
+  Eio.traceln "\nDelete Tests:";
+  List.iter (run_test ~sw ~env) E2e.Test_delete.tests;
+
+  Eio.traceln "\nCORS Tests:";
+  List.iter (run_test ~sw ~env) E2e.Test_cors.tests;
+
   Eio.traceln "\nDone."
