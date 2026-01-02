@@ -44,68 +44,33 @@ jobs:
         env:
           LD_PRELOAD: ${{ steps.secp.outputs.path }}
         run: |
-          # Build and get the actual executable path
-          opam exec -- dune build
-
-          # Run the server in background
           nohup opam exec -- dune exec blossoML -- \
             --port 3000 \
             --host 0.0.0.0 > /tmp/server.log 2>&1 &
           SERVER_PID=$!
           echo $SERVER_PID > /tmp/server.pid
-          echo "Server PID: $SERVER_PID"
-
-          # Give server a moment to start
           sleep 2
-
-          # Check if server process is still running
-          if ! kill -0 $SERVER_PID 2>/dev/null; then
-            echo "ERROR: Server process died immediately"
-            echo "=== Server log ==="
-            cat /tmp/server.log || true
-            exit 1
-          fi
-
-          # Wait for server to be ready
-          SERVER_READY=false
           for i in {1..30}; do
             if curl -s http://localhost:3000/ > /dev/null 2>&1; then
               echo "Server is ready"
-              SERVER_READY=true
-              break
+              exit 0
             fi
-            # Check if process is still alive
             if ! kill -0 $SERVER_PID 2>/dev/null; then
               echo "ERROR: Server process died"
-              echo "=== Server log ==="
               cat /tmp/server.log || true
               exit 1
             fi
-            echo "Waiting for server... ($i)"
             sleep 1
           done
-
-          # Show server log
-          echo "=== Server log ==="
+          echo "ERROR: Server failed to start"
           cat /tmp/server.log || true
-
-          # Fail if server didn't start
-          if [ "$SERVER_READY" != "true" ]; then
-            echo "ERROR: Server failed to start within timeout"
-            exit 1
-          fi
+          exit 1
 
       - name: Run E2E tests
         env:
           LD_PRELOAD: ${{ steps.secp.outputs.path }}
           E2E_BASE_URL: http://localhost:3000
         run: opam exec -- dune exec e2e/main.exe
-
-      - name: Show server logs
-        if: always()
-        run: |
-          echo "=== Server log ==="
-          cat /tmp/server.log || true
 
       - name: Stop Blossom server
         if: always()
