@@ -13,6 +13,10 @@ let test_validate_hash_invalid_char () =
   let hash = "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" in
   check bool "invalid char returns false" false (Integrity.validate_hash hash)
 
+let test_validate_hash_uppercase () =
+  let hash = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855" in
+  check bool "uppercase hash returns false" false (Integrity.validate_hash hash)
+
 let test_validate_size_valid () =
   check bool "positive size is ok" true (Result.is_ok (Integrity.validate_size 100))
 
@@ -26,6 +30,7 @@ let tests = [
   test_case "validate_hash valid" `Quick test_validate_hash_valid;
   test_case "validate_hash invalid length" `Quick test_validate_hash_invalid_length;
   test_case "validate_hash invalid char" `Quick test_validate_hash_invalid_char;
+  test_case "validate_hash uppercase" `Quick test_validate_hash_uppercase;
   test_case "validate_size valid" `Quick test_validate_size_valid;
   test_case "validate_size zero" `Quick test_validate_size_zero;
   test_case "validate_size negative" `Quick test_validate_size_negative;
