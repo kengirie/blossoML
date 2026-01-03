@@ -10,6 +10,7 @@ let run_test ~sw ~env (name, test_fn) =
     raise e
 
 let () =
+  Random.self_init ();
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
 
