@@ -43,7 +43,7 @@ opam install . --deps-only
 dune build
 
 # Run
-dune exec blossoML -- --port 8082
+dune exec blossoML -- --port 8080
 ```
 
 ### Command Line Options
@@ -51,18 +51,18 @@ dune exec blossoML -- --port 8082
 ```
 --host      Host to bind to (default: localhost)
             Use "0.0.0.0" for external access
---port      Port to listen on (default: 8082)
+--port      Port to listen on
 --cert      Path to SSL certificate (optional)
 --key       Path to SSL private key (optional)
 --base-url  Base URL for blob URLs in responses
-            (e.g., https://example.com:8082)
+            (e.g., https://example.com:8080)
 ```
 
 ### Examples
 
 ```bash
 # Local development
-dune exec blossoML -- --host localhost --port 8082
+dune exec blossoML -- --host localhost --port 8080
 
 ```
 
