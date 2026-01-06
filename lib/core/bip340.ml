@@ -19,19 +19,16 @@ type secp256k1_keypair = unit ptr
 
 let secp256k1_keypair : unit abstract typ =
   abstract ~name:"secp256k1_keypair" ~size:96 ~alignment:0
-;;
 
 type secp256k1_xonly_pubkey = unit ptr
 
 let secp256k1_xonly_pubkey : unit abstract typ =
   abstract ~name:"secp256k1_xonly_pubkey" ~size:64 ~alignment:0
-;;
 
 (* FFI bindings *)
 
 let secp256k1_context_create =
   foreign "secp256k1_context_create" (uint @-> returning secp256k1_context)
-;;
 
 let secp256k1_schnorrsig_verify =
   foreign
@@ -42,19 +39,16 @@ let secp256k1_schnorrsig_verify =
      @-> size_t
      @-> ptr secp256k1_xonly_pubkey
      @-> returning int)
-;;
 
 let secp256k1_xonly_pubkey_parse =
   foreign
     "secp256k1_xonly_pubkey_parse"
     (secp256k1_context @-> ptr secp256k1_xonly_pubkey @-> ptr char @-> returning int)
-;;
 
 let secp256k1_keypair_create =
   foreign
     "secp256k1_keypair_create"
     (secp256k1_context @-> ptr secp256k1_keypair @-> ptr char @-> returning int)
-;;
 
 let secp256k1_schnorrsig_sign32 =
   foreign
@@ -65,7 +59,6 @@ let secp256k1_schnorrsig_sign32 =
      @-> ptr secp256k1_keypair
      @-> ptr char (* aux_rand32, can be NULL *)
      @-> returning int)
-;;
 
 let secp256k1_keypair_xonly_pub =
   foreign
@@ -75,13 +68,11 @@ let secp256k1_keypair_xonly_pub =
      @-> ptr int (* pk_parity, can be NULL *)
      @-> ptr secp256k1_keypair
      @-> returning int)
-;;
 
 let secp256k1_xonly_pubkey_serialize =
   foreign
     "secp256k1_xonly_pubkey_serialize"
     (secp256k1_context @-> ptr char @-> ptr secp256k1_xonly_pubkey @-> returning int)
-;;
 
 (* Context initialization
 
@@ -99,13 +90,11 @@ let secp256k1_xonly_pubkey_serialize =
 
 let ctx =
   secp256k1_context_create (Unsigned.UInt.of_int ((1 lsl 0) lor (1 lsl 8) lor (1 lsl 9)))
-;;
 
 (* Helper functions *)
 
 let is_hex_char c =
   (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-;;
 
 let hex_to_bytes ~field hex : (Bytes.t, verify_error) result =
   let len = String.length hex in
@@ -121,7 +110,6 @@ let hex_to_bytes ~field hex : (Bytes.t, verify_error) result =
     done;
     Ok bytes
   end
-;;
 
 let verify ~pubkey ~msg ~signature : (unit, verify_error) result =
   (* Validate lengths first *)
@@ -165,13 +153,11 @@ let verify ~pubkey ~msg ~signature : (unit, verify_error) result =
             in
             if ok = 1 then Ok ()
             else Error Signature_verification_failed
-;;
 
 let bytes_to_hex bytes =
   let buf = Buffer.create (Bytes.length bytes * 2) in
   Bytes.iter (fun c -> Buffer.add_string buf (Printf.sprintf "%02x" (int_of_char c))) bytes;
   Buffer.contents buf
-;;
 
 type sign_error =
   | Sign_invalid_secret_key_length of { expected : int; actual : int }
@@ -247,4 +233,3 @@ let sign ~secret_key ~msg : ((string * string), sign_error) result =
             end
           end
         end
-;;
