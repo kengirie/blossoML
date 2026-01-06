@@ -252,6 +252,93 @@ let test_validate_x_tag_missing () =
           check bool "error mentions x tag" true (String.length msg > 0)
       | Error _ -> fail "Expected Auth_error"
 
+(* BUD-02: Multiple x tags MUST NOT be interpreted as bulk delete.
+   When multiple x tags are present, server MUST only delete the blob listed in the URL.
+   This test verifies that:
+   1. An auth event with multiple x tags validates successfully for ONE of the hashes
+   2. The same auth event does NOT validate for hashes NOT in the x tags *)
+let delete_event_multiple_x_tags_json = {|{
+  "id": "test_multiple_x_tags",
+  "pubkey": "83279ad28eec4785e2139dc529a9650fdbb424366d4645e5c2824f7cbd49240d",
+  "kind": 24242,
+  "content": "Delete multiple files",
+  "created_at": 1766993740,
+  "tags": [
+    ["expiration", "1766993800"],
+    ["t", "delete"],
+    ["x", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    ["x", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    ["x", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]
+  ],
+  "sig": "dummy_sig_for_test"
+}|}
+
+(* Test: validate_x_tag succeeds for first hash in multiple x tags *)
+let test_multiple_x_tags_validates_first_hash () =
+  let encoded = Base64.encode_exn delete_event_multiple_x_tags_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.parse_auth_header header with
+  | Error _ -> fail "Should have parsed header"
+  | Ok event ->
+      let first_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" in
+      match Auth.validate_x_tag event ~sha256:first_hash with
+      | Ok () -> () (* Expected: validation succeeds for hash in x tags *)
+      | Error _ -> fail "Should have validated first x tag hash"
+
+(* Test: validate_x_tag succeeds for second hash in multiple x tags *)
+let test_multiple_x_tags_validates_second_hash () =
+  let encoded = Base64.encode_exn delete_event_multiple_x_tags_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.parse_auth_header header with
+  | Error _ -> fail "Should have parsed header"
+  | Ok event ->
+      let second_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in
+      match Auth.validate_x_tag event ~sha256:second_hash with
+      | Ok () -> () (* Expected: validation succeeds for hash in x tags *)
+      | Error _ -> fail "Should have validated second x tag hash"
+
+(* Test: validate_x_tag succeeds for third hash in multiple x tags *)
+let test_multiple_x_tags_validates_third_hash () =
+  let encoded = Base64.encode_exn delete_event_multiple_x_tags_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.parse_auth_header header with
+  | Error _ -> fail "Should have parsed header"
+  | Ok event ->
+      let third_hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" in
+      match Auth.validate_x_tag event ~sha256:third_hash with
+      | Ok () -> () (* Expected: validation succeeds for hash in x tags *)
+      | Error _ -> fail "Should have validated third x tag hash"
+
+(* Test: validate_x_tag fails for hash NOT in multiple x tags
+   This ensures we only validate the specific blob in the URL, not bulk delete *)
+let test_multiple_x_tags_rejects_unlisted_hash () =
+  let encoded = Base64.encode_exn delete_event_multiple_x_tags_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.parse_auth_header header with
+  | Error _ -> fail "Should have parsed header"
+  | Ok event ->
+      let unlisted_hash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" in
+      match Auth.validate_x_tag event ~sha256:unlisted_hash with
+      | Ok () -> fail "Should have rejected hash not in x tags"
+      | Error (Domain.Auth_error _) -> () (* Expected: rejection *)
+      | Error _ -> fail "Expected Auth_error"
+
+(* Test: Verify find_all_tags returns all x tags *)
+let test_find_all_x_tags_returns_all () =
+  let encoded = Base64.encode_exn delete_event_multiple_x_tags_json in
+  let header = "Nostr " ^ encoded in
+  match Auth.parse_auth_header header with
+  | Error _ -> fail "Should have parsed header"
+  | Ok event ->
+      let x_tags = Nostr_event.find_all_tags event "x" in
+      check int "should have 3 x tags" 3 (List.length x_tags);
+      check bool "contains first hash" true
+        (List.mem "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" x_tags);
+      check bool "contains second hash" true
+        (List.mem "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" x_tags);
+      check bool "contains third hash" true
+        (List.mem "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" x_tags)
+
 let tests = [
   test_case "parse_auth_header valid" `Quick test_parse_auth_header_valid;
   test_case "validate_auth valid event 1" `Quick test_validate_auth_valid_event1;
@@ -270,4 +357,10 @@ let tests = [
   test_case "validate_x_tag success" `Quick test_validate_x_tag_success;
   test_case "validate_x_tag failure" `Quick test_validate_x_tag_failure;
   test_case "validate_x_tag missing" `Quick test_validate_x_tag_missing;
+  (* BUD-02: Multiple x tags tests - no bulk delete *)
+  test_case "multiple x tags validates first hash" `Quick test_multiple_x_tags_validates_first_hash;
+  test_case "multiple x tags validates second hash" `Quick test_multiple_x_tags_validates_second_hash;
+  test_case "multiple x tags validates third hash" `Quick test_multiple_x_tags_validates_third_hash;
+  test_case "multiple x tags rejects unlisted hash" `Quick test_multiple_x_tags_rejects_unlisted_hash;
+  test_case "find_all_x_tags returns all" `Quick test_find_all_x_tags_returns_all;
 ]
