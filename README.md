@@ -8,7 +8,7 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 - [x] `HEAD /<sha256>` - Has blob ([BUD-01](https://github.com/hzrd149/blossom/blob/master/buds/01.md))
 - [x] `PUT /upload` - Upload blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
 - [x] `DELETE /<sha256>` - Delete blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
-- [ ] `GET /list/<pubkey>` - List blobs ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
+- [ ] `GET /list/<pubkey>` - List blobs ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))(Unrecommended)
 - [ ] `HEAD /upload` - Upload requirements ([BUD-06](https://github.com/hzrd149/blossom/blob/master/buds/06.md))
 - [ ] `PUT /mirror` - Mirror blob ([BUD-04](https://github.com/hzrd149/blossom/blob/master/buds/04.md))
 - [ ] `HEAD /media` - Media optimization info ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
@@ -64,8 +64,6 @@ dune exec blossoML -- --port 8082
 # Local development
 dune exec blossoML -- --host localhost --port 8082
 
-# Production (external access)
-dune exec blossoML -- --host 0.0.0.0 --port 8082 --base-url https://your-domain.com
 ```
 
 ## How to Run Tests
