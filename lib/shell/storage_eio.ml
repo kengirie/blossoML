@@ -30,18 +30,42 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
   (** 空ファイルのSHA-256ハッシュ（定数） *)
   let empty_sha256 = Digestif.SHA256.(to_hex (digest_string ""))
 
+  (** ファイルの存在確認（内部用） *)
+  let file_exists_internal path =
+    try
+      let _ = Eio.Path.stat ~follow:true path in
+      Ok true
+    with
+    | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
+        Ok false
+    | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) ->
+        Error (Domain.Storage_error "Permission denied")
+    | exn ->
+        Error (Domain.Storage_error (Printexc.to_string exn))
+
   (** 空ファイルを保存する（冪等） *)
   let save_empty dir =
     let final_path = Eio.Path.(dir / empty_sha256) in
-    try
-      Eio.Path.with_open_out ~create:(`Or_truncate 0o644) final_path ignore;
-      Ok {
-        Storage_intf.sha256 = empty_sha256;
-        size = 0;
-        first_chunk = None;
-      }
-    with exn ->
-      Error (Domain.Storage_error (Printexc.to_string exn))
+    (* 既存ファイルチェック（冪等性） *)
+    match file_exists_internal final_path with
+    | Error e -> Error e
+    | Ok true ->
+        (* 既に存在する場合は成功扱い *)
+        Ok {
+          Storage_intf.sha256 = empty_sha256;
+          size = 0;
+          first_chunk = None;
+        }
+    | Ok false ->
+        try
+          Eio.Path.with_open_out ~create:(`Or_truncate 0o644) final_path ignore;
+          Ok {
+            Storage_intf.sha256 = empty_sha256;
+            size = 0;
+            first_chunk = None;
+          }
+        with exn ->
+          Error (Domain.Storage_error (Printexc.to_string exn))
 
   let save dir ~body ~max_size =
     (* Content-Length: 0 の場合は即座に空ファイル処理（ブロック回避） *)
@@ -96,18 +120,33 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
               save_empty dir
             end else
               let hash = Digestif.SHA256.(to_hex (get state.ctx)) in
-              (* 一時ファイルを最終パスにリネーム *)
-              (try
-                let final_path = Eio.Path.(dir / hash) in
-                Eio.Path.rename temp_path final_path;
-                Ok {
-                  Storage_intf.sha256 = hash;
-                  size = state.size;
-                  first_chunk = state.first_chunk;
-                }
-              with exn ->
-                (try Eio.Path.unlink temp_path with _ -> ());
-                Error (Domain.Storage_error (Printexc.to_string exn)))
+              let final_path = Eio.Path.(dir / hash) in
+              (* 同じハッシュのファイルが既に存在するかチェック *)
+              match file_exists_internal final_path with
+              | Error e ->
+                  (* stat失敗時は一時ファイルを削除してエラーを返す *)
+                  (try Eio.Path.unlink temp_path with _ -> ());
+                  Error e
+              | Ok true ->
+                  (* 既存ファイルがある場合は一時ファイルを削除して成功扱い（冪等性） *)
+                  (try Eio.Path.unlink temp_path with _ -> ());
+                  Ok {
+                    Storage_intf.sha256 = hash;
+                    size = state.size;
+                    first_chunk = state.first_chunk;
+                  }
+              | Ok false ->
+                  (* 一時ファイルを最終パスにリネーム *)
+                  (try
+                    Eio.Path.rename temp_path final_path;
+                    Ok {
+                      Storage_intf.sha256 = hash;
+                      size = state.size;
+                      first_chunk = state.first_chunk;
+                    }
+                  with exn ->
+                    (try Eio.Path.unlink temp_path with _ -> ());
+                    Error (Domain.Storage_error (Printexc.to_string exn)))
 
   let get ~sw dir ~path ~size =
     let chunk_size = 16384 in (* 16KB chunks *)
