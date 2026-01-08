@@ -180,7 +180,18 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
                 match Db.delete db ~sha256 with
                 | Error e -> Error e
                 | Ok () ->
-                    (* ファイル物理削除（エラーは無視してDBの状態を優先） *)
-                    let _ = Storage.unlink storage ~path:sha256 in
-                    Ok ()
+                    (* ファイル物理削除 *)
+                    match Storage.unlink storage ~path:sha256 with
+                    | Ok () -> Ok ()
+                    | Error (Domain.Blob_not_found _) ->
+                        (* ファイルが既に存在しない場合は成功扱い *)
+                        Ok ()
+                    | Error e ->
+                        (* エラーをログ出力して調査用に記録 *)
+                        Eio.traceln "WARNING: Failed to unlink file %s: %s" sha256
+                          (match e with
+                           | Domain.Storage_error msg -> msg
+                           | Domain.Forbidden msg -> msg
+                           | _ -> "Unknown error");
+                        Error e
 end
