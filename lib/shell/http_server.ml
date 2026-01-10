@@ -1,8 +1,8 @@
 open Piaf
 open Blossom_core
 
-(** Blob_serviceのインスタンス化 *)
-module BlobService = Blob_service.Make(Storage_eio.Impl)(Blossom_db.Impl)
+(** Storage_eioを直接使用するBlob_serviceインスタンス（ローカル用） *)
+module BlobServiceLocal = Blob_service.Make(Storage_eio.Impl)(Blossom_db.Impl)
 
 (** ログ出力（副作用） *)
 let log_response ~request response =
@@ -34,7 +34,20 @@ let error_to_response_kind = function
   | Domain.Unsupported_media_type msg -> Http_response.Error_unsupported_media_type msg
   | Domain.Invalid_content_type msg -> Http_response.Error_bad_request msg
 
-let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
+(** BlobServiceの操作をまとめたレコード型 *)
+type blob_ops = {
+  get : sw:Eio.Switch.t -> storage:Storage_eio.Impl.t -> db:Blossom_db.Impl.t -> sha256:string ->
+        (Piaf.Body.t * Domain.blob_descriptor, Domain.error) result;
+  get_metadata : storage:Storage_eio.Impl.t -> db:Blossom_db.Impl.t -> sha256:string ->
+                 (Domain.blob_descriptor, Domain.error) result;
+  save : storage:Storage_eio.Impl.t -> db:Blossom_db.Impl.t -> body:Piaf.Body.t ->
+         mime_type:string -> uploader:string -> max_size:int ->
+         (string * int * string, Domain.error) result;
+  delete : storage:Storage_eio.Impl.t -> db:Blossom_db.Impl.t -> sha256:string -> pubkey:string ->
+           (unit, Domain.error) result;
+}
+
+let request_handler ~blob_ops ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
 
   (* レスポンス種別を決定 *)
@@ -51,7 +64,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
            if not (Integrity.validate_hash hash) then
              Http_response.Error_not_found "Invalid path or hash"
            else
-             (match BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash with
+             (match blob_ops.get ~sw ~storage:data_dir ~db ~sha256:hash with
               | Ok (body, metadata) ->
                   Http_response.Success_blob_stream {
                     body;
@@ -69,7 +82,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
            if not (Integrity.validate_hash hash) then
              Http_response.Error_not_found "Invalid path or hash"
            else
-             (match BlobService.get_metadata ~storage:data_dir ~db ~sha256:hash with
+             (match blob_ops.get_metadata ~storage:data_dir ~db ~sha256:hash with
               | Ok metadata ->
                   Http_response.Success_metadata {
                     mime_type = metadata.mime_type;
@@ -117,7 +130,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                      | Ok () ->
                     (* Use original mime_type to preserve parameters like charset, boundary *)
                     (* ストリーミング中にサイズ制限を適用 *)
-                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey ~max_size:policy.max_size with
+                    (match blob_ops.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey ~max_size:policy.max_size with
                      | Error e ->
                          Eio.traceln "Save failed: %s" (match e with Domain.Storage_error m -> m | _ -> "Unknown error");
                          error_to_response_kind e
@@ -127,7 +140,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                           | Error e ->
                               (* 照合失敗時はアップロードしたファイルを削除 *)
                               Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
-                              let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
+                              let _ = blob_ops.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
                               error_to_response_kind e
                           | Ok _ ->
                               Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
@@ -157,7 +170,7 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                   | Error e -> error_to_response_kind e
                   | Ok pubkey ->
                       Eio.traceln "Delete request for %s by %s" hash pubkey;
-                      (match BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey with
+                      (match blob_ops.delete ~storage:data_dir ~db ~sha256:hash ~pubkey with
                        | Ok () ->
                            Eio.traceln "Delete successful: %s" hash;
                            Http_response.Success_delete
@@ -179,7 +192,31 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
   log_response ~request response;
   response
 
-let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
+let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?(use_reader_guard=false) ?cert ?key () =
+  (* Build BlobService operations
+     use_reader_guard=true: Reader-guarded storage (delays unlink while reads in progress)
+     use_reader_guard=false: Direct filesystem access *)
+  let blob_ops =
+    if use_reader_guard then
+      (* Reader-guarded: wrap storage to track active readers *)
+      let module GuardedStorage = Storage_reader_guard.Make(Storage_eio.Impl) in
+      let module BlobServiceGuarded = Blob_service.Make(GuardedStorage)(Blossom_db.Impl) in
+      {
+        get = BlobServiceGuarded.get;
+        get_metadata = BlobServiceGuarded.get_metadata;
+        save = BlobServiceGuarded.save;
+        delete = BlobServiceGuarded.delete;
+      }
+    else
+      (* Direct: use Storage_eio directly *)
+      {
+        get = BlobServiceLocal.get;
+        get_metadata = BlobServiceLocal.get_metadata;
+        save = BlobServiceLocal.save;
+        delete = BlobServiceLocal.delete;
+      }
+  in
+
   let ip_addr = match host with
     | "localhost" | "127.0.0.1" -> Eio.Net.Ipaddr.V4.loopback
     | "0.0.0.0" -> Eio.Net.Ipaddr.V4.any
@@ -206,6 +243,6 @@ let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
       address
   in
 
-  let server = Server.create ~config (request_handler ~sw ~clock ~data_dir ~db ~base_url) in
+  let server = Server.create ~config (request_handler ~blob_ops ~sw ~clock ~data_dir ~db ~base_url) in
   let _ = Server.Command.start ~sw env server in
   ()

@@ -56,7 +56,16 @@ dune exec blossoML -- --port 8080
 --key       Path to SSL private key (optional)
 --base-url  Base URL for blob URLs in responses
             (e.g., https://example.com:8080)
+--storage   Storage mode (default: direct)
+            Use "reader-guarded" to delay deletes while reads are in flight
+            (same as setting BLOSSOM_STORAGE=reader-guarded)
 ```
+
+When the blob directory lives on Azure Files mounted over SMB/CIFS (or any other
+CIFS mount), run with `--storage reader-guarded` (or set
+`BLOSSOM_STORAGE=reader-guarded`). This makes DELETE requests wait until
+in-flight GET streams finish to avoid SMB/CIFS sharing violations. NFS mounts do
+not require this mode.
 
 ### Examples
 

@@ -33,7 +33,7 @@ module type S = sig
     sha256:string ->
     (Domain.blob_descriptor, Domain.error) result
 
-  (** Blobを削除する（所有者検証 → 所有関係削除 → 所有者0なら論理削除＋物理削除） *)
+  (** Blobを削除する（所有者検証 → 所有関係削除 → 所有者0ならDB削除→物理削除） *)
   val delete :
     storage:storage ->
     db:db ->
@@ -94,27 +94,6 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
              match Storage.get ~sw storage ~path:sha256 ~size:metadata.size with
              | Error e -> Error e
              | Ok body -> Ok (body, metadata))
-    | Error (Domain.Blob_not_found _) ->
-        (* DBにない場合もファイルがあればストリーミングで返す（後方互換性） *)
-        (match Storage.exists storage ~path:sha256 with
-         | Error e -> Error e
-         | Ok false -> Error (Domain.Blob_not_found sha256)
-         | Ok true ->
-             (* サイズを取得 *)
-             match Storage.stat storage ~path:sha256 with
-             | Error e -> Error e
-             | Ok size ->
-                 (* ストリーミングで取得 *)
-                 match Storage.get ~sw storage ~path:sha256 ~size with
-                 | Error e -> Error e
-                 | Ok body ->
-                     Ok (body, {
-                       Domain.sha256 = sha256;
-                       size;
-                       mime_type = "application/octet-stream";
-                       uploaded = 0L;
-                       url = "/";
-                     }))
     | Error e -> Error e
 
   let get_metadata ~storage ~db ~sha256 =
@@ -125,73 +104,55 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
          | Error e -> Error e
          | Ok false -> Error (Domain.Blob_not_found sha256)
          | Ok true -> Ok metadata)
-    | Error (Domain.Blob_not_found _) ->
-        (* DBにない場合もファイルがあればメタデータを返す（後方互換性） *)
-        (match Storage.exists storage ~path:sha256 with
-         | Error e -> Error e
-         | Ok false -> Error (Domain.Blob_not_found sha256)
-         | Ok true ->
-             match Storage.stat storage ~path:sha256 with
-             | Error e -> Error e
-             | Ok size ->
-                 Ok {
-                   Domain.sha256 = sha256;
-                   size;
-                   mime_type = "application/octet-stream";
-                   uploaded = 0L;
-                   url = "/";
-                 })
     | Error e -> Error e
 
   let delete ~storage ~db ~sha256 ~pubkey =
-    (* 1. まずBlobが存在するか確認（存在しない場合は404） *)
+    (* Check if blob exists in DB (404 if not) *)
     match Db.get db ~sha256 with
-    | Error (Domain.Blob_not_found _) ->
-        (* DBにない場合もファイルがあるか確認（後方互換性） *)
-        (match Storage.exists storage ~path:sha256 with
-         | Error e -> Error e
-         | Ok false -> Error (Domain.Blob_not_found sha256)
-         | Ok true ->
-             (* ファイルはあるがDBにない場合は削除を許可（orphaned file） *)
-             let _ = Storage.unlink storage ~path:sha256 in
-             Ok ())
     | Error e -> Error e
-    | Ok _ ->
-        (* 2. 所有者かどうか確認 *)
+    | Ok metadata ->
+        (* Verify caller is an owner *)
         match Db.has_owner db ~sha256 ~pubkey with
         | Error e -> Error e
         | Ok false ->
-            (* 所有者でない場合は拒否 *)
             Error (Domain.Forbidden "Not authorized to delete this blob")
         | Ok true ->
-        (* 3. 所有関係を削除 *)
+        (* Remove ownership relation *)
         match Db.remove_owner db ~sha256 ~pubkey with
         | Error e -> Error e
         | Ok () ->
-            (* 4. 残りの所有者数を確認 *)
+            (* Check remaining owners *)
             match Db.count_owners db ~sha256 with
             | Error e -> Error e
             | Ok count when count > 0 ->
-                (* 他の所有者がいる場合は所有関係の削除のみで終了 *)
+                (* Other owners exist; only ownership was removed *)
                 Ok ()
             | Ok _ ->
-                (* 所有者がいなくなった場合はblob自体を削除 *)
-                (* DB論理削除 *)
-                match Db.delete db ~sha256 with
-                | Error e -> Error e
-                | Ok () ->
-                    (* ファイル物理削除 *)
-                    match Storage.unlink storage ~path:sha256 with
-                    | Ok () -> Ok ()
-                    | Error (Domain.Blob_not_found _) ->
-                        (* ファイルが既に存在しない場合は成功扱い *)
-                        Ok ()
-                    | Error e ->
-                        (* エラーをログ出力して調査用に記録 *)
-                        Eio.traceln "WARNING: Failed to unlink file %s: %s" sha256
-                          (match e with
-                           | Domain.Storage_error msg -> msg
-                           | Domain.Forbidden msg -> msg
-                           | _ -> "Unknown error");
-                        Error e
+                (* No owners remain; delete the blob entirely.
+                   Delete from DB first, then unlink file.
+                   If either fails, restore DB state. *)
+                (match Db.delete db ~sha256 with
+                 | Error e ->
+                     (* Db.delete failed; restore ownership *)
+                     let _ = Db.add_owner db ~sha256 ~pubkey in
+                     Eio.traceln "WARNING: Db.delete failed for %s, restored owner: %s" sha256
+                       (match e with Domain.Storage_error msg -> msg | _ -> "Unknown error");
+                     Error e
+                 | Ok () ->
+                     (* DB deleted; now unlink file *)
+                     (match Storage.unlink storage ~path:sha256 with
+                      | Ok () -> Ok ()
+                      | Error (Domain.Blob_not_found _) ->
+                          (* File already gone; success *)
+                          Ok ()
+                      | Error e ->
+                          (* Unlink failed; restore DB entry and ownership *)
+                          let _ = Db.save db ~sha256 ~size:metadata.size ~mime_type:metadata.mime_type in
+                          let _ = Db.add_owner db ~sha256 ~pubkey in
+                          Eio.traceln "WARNING: Failed to unlink file %s, restored DB entry: %s" sha256
+                            (match e with
+                             | Domain.Storage_error msg -> msg
+                             | Domain.Forbidden msg -> msg
+                             | _ -> "Unknown error");
+                          Error e))
 end

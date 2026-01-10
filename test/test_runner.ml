@@ -10,4 +10,5 @@ let () =
     "Content_type", Test_content_type.tests;
     "Nostr_event", Test_nostr_event.tests;
     "Nostr_signer", Test_nostr_signer.tests;
+    "Blob_service", Test_blob_service.tests;
   ]
