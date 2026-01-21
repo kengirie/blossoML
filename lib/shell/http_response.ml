@@ -19,6 +19,8 @@ type response_kind =
     (** Blobアップロード成功 *)
   | Success_delete
     (** Blob削除成功 *)
+  | Success_upload_check
+    (** アップロード事前チェック成功（HEAD /upload用） *)
   | Cors_preflight
     (** CORSプリフライトレスポンス *)
   | Error_not_found of string
@@ -29,6 +31,8 @@ type response_kind =
     (** 403 Forbidden *)
   | Error_bad_request of string
     (** 400 Bad Request *)
+  | Error_length_required of string
+    (** 411 Length Required *)
   | Error_payload_too_large of string
     (** 413 Payload Too Large *)
   | Error_unsupported_media_type of string
@@ -106,6 +110,10 @@ let create = function
       ]) in
       Response.create ~headers ~body:(Body.of_string json) `OK
 
+  | Success_upload_check ->
+      let headers = Headers.of_list cors_headers in
+      Response.create ~headers `OK
+
   | Cors_preflight ->
       let headers = Headers.of_list cors_headers in
       Response.create ~headers `No_content
@@ -125,6 +133,10 @@ let create = function
   | Error_bad_request message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Bad_request
+
+  | Error_length_required message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
+      Response.create ~headers ~body:(Body.of_string message) `Length_required
 
   | Error_payload_too_large message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in

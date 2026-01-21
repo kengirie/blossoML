@@ -60,6 +60,12 @@ let test_success_delete () =
   check int "Status code" 200 (get_status response);
   check_cors_headers response
 
+(* Success_upload_check レスポンステスト *)
+let test_success_upload_check () =
+  let response = Http_response.create Success_upload_check in
+  check int "Status code" 200 (get_status response);
+  check_cors_headers response
+
 (* Cors_preflight レスポンステスト *)
 let test_cors_preflight () =
   let response = Http_response.create Cors_preflight in
@@ -85,6 +91,13 @@ let test_error_bad_request () =
   let response = Http_response.create (Error_bad_request "Invalid input") in
   check int "Status code" 400 (get_status response);
   check (option string) "X-Reason header" (Some "Invalid input") (get_header response "x-reason");
+  check_cors_headers response
+
+(* Error_length_required レスポンステスト *)
+let test_error_length_required () =
+  let response = Http_response.create (Error_length_required "Missing X-Content-Length header") in
+  check int "Status code" 411 (get_status response);
+  check (option string) "X-Reason header" (Some "Missing X-Content-Length header") (get_header response "x-reason");
   check_cors_headers response
 
 (* Error_internal レスポンステスト *)
@@ -160,11 +173,13 @@ let tests = [
   test_case "Success_metadata response" `Quick test_success_metadata;
   test_case "Success_upload response" `Quick test_success_upload;
   test_case "Success_delete response" `Quick test_success_delete;
+  test_case "Success_upload_check response" `Quick test_success_upload_check;
   test_case "Cors_preflight response" `Quick test_cors_preflight;
   test_case "Error_not_found response" `Quick test_error_not_found;
   test_case "Error_unauthorized response" `Quick test_error_unauthorized;
   test_case "Error_forbidden response" `Quick test_error_forbidden;
   test_case "Error_bad_request response" `Quick test_error_bad_request;
+  test_case "Error_length_required response" `Quick test_error_length_required;
   test_case "Error_internal response" `Quick test_error_internal;
   test_case "descriptor_to_json function" `Quick test_descriptor_to_json;
   (* error_to_response_kind mapping tests *)

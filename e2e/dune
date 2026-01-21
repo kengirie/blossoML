@@ -1,6 +1,6 @@
 (library
  (name e2e)
- (modules config nostr_signer http_client test_upload test_delete test_cors test_get)
+ (modules config nostr_signer http_client test_upload test_delete test_cors test_get test_head_upload)
  (libraries
   blossoML.core
   piaf

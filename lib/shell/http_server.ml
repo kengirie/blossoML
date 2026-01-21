@@ -61,6 +61,58 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
               | Error e -> error_to_response_kind e)
        | _ -> Http_response.Error_not_found "Invalid path")
 
+  | `HEAD, "/upload" ->
+      (* BUD-06: Upload requirements check *)
+      (* 1. X-Content-Length ヘッダーを取得（必須） *)
+      (match Headers.get request.headers "x-content-length" with
+       | None -> Http_response.Error_length_required "Missing X-Content-Length header"
+       | Some len_str ->
+           match int_of_string_opt len_str with
+           | None -> Http_response.Error_bad_request "Invalid X-Content-Length header format"
+           | Some size when size < 0 -> Http_response.Error_bad_request "X-Content-Length must be non-negative"
+           | Some size ->
+               (* 2. X-SHA-256 ヘッダーを取得（任意だが形式検証） *)
+               let sha256_opt = match Headers.get request.headers "x-sha-256" with
+                 | None -> Ok None
+                 | Some hash ->
+                     if Integrity.validate_hash hash then Ok (Some hash)
+                     else Error "Invalid X-SHA-256 header format"
+               in
+               match sha256_opt with
+               | Error msg -> Http_response.Error_bad_request msg
+               | Ok sha256_opt ->
+                   (* 3. MIME type を取得（PUT /upload と同じ優先順位: Content-Type -> X-Content-Type -> default） *)
+                   let mime_type =
+                     match Headers.get request.headers "content-type" with
+                     | Some ct when String.length ct > 0 -> ct
+                     | _ ->
+                         match Headers.get request.headers "x-content-type" with
+                         | Some xct when String.length xct > 0 -> xct
+                         | _ -> "application/octet-stream"
+                   in
+                   (* 4. Authorization ヘッダーの検証（PUT /upload と同じ挙動） *)
+                   (* Authorization は必須（PUT /upload と同じ） *)
+                   match Headers.get request.headers "authorization" with
+                   | None -> Http_response.Error_unauthorized "Missing Authorization header"
+                   | Some auth_header ->
+                       let current_time = Int64.of_float (Eio.Time.now clock) in
+                       (* X-SHA-256 がある場合は x タグ検証も行う *)
+                       let auth_result = match sha256_opt with
+                         | Some sha256 ->
+                             Auth.validate_upload_auth ~header:auth_header ~sha256 ~current_time
+                         | None ->
+                             (* X-SHA-256 がない場合は基本検証のみ *)
+                             Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time
+                       in
+                       (match auth_result with
+                        | Error e -> error_to_response_kind e
+                        | Ok _ ->
+                            (* 5. Policy チェック（サイズ、MIMEタイプ） *)
+                            let policy = Policy.default_policy in
+                            match Policy.check_upload_policy ~policy ~size ~mime:mime_type with
+                            | Error e -> error_to_response_kind e
+                            | Ok () -> Http_response.Success_upload_check))
+
   | `HEAD, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
       (match path_parts with

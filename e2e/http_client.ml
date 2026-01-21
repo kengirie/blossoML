@@ -20,6 +20,7 @@ let status_to_int status =
   | `Forbidden -> 403
   | `Not_found -> 404
   | `Method_not_allowed -> 405
+  | `Length_required -> 411
   | `Payload_too_large -> 413
   | `Unsupported_media_type -> 415
   | `Internal_server_error -> 500
