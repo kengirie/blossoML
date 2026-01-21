@@ -112,14 +112,27 @@ module Make (Base : Storage_intf.S) : Storage_intf.S with type t = Base.t = stru
             (fun () ->
               let chunk_count = ref 0 in
               let rec forward () =
+                (* Stream.take exceptions propagate up (storage errors should cause 5xx) *)
                 match Piaf.Stream.take base_stream with
                 | None ->
                     Eio.traceln "[ReaderGuard] get: %s -> stream ended after %d chunks" path !chunk_count;
                     push None
                 | Some chunk ->
                     incr chunk_count;
-                    push (Some chunk);
-                    forward ()
+                    (* Handle exceptions from push (e.g., client disconnected) *)
+                    let push_ok =
+                      try push (Some chunk); true
+                      with exn ->
+                        Eio.traceln "[ReaderGuard] get: %s -> push exception after %d chunks: %s"
+                          path !chunk_count (Printexc.to_string exn);
+                        false
+                    in
+                    if push_ok then forward ()
+                    else begin
+                      (* Client disconnected; close the stream and exit *)
+                      Eio.traceln "[ReaderGuard] get: %s -> client disconnected, closing stream" path;
+                      (try push None with _ -> ())
+                    end
               in
               forward ()
             )
