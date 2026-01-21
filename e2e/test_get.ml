@@ -638,9 +638,9 @@ let test_head_get_consistent_headers ~sw ~env =
 let test_head_invalid_paths ~sw ~env =
   let base_url = Config.base_url in
 
+  (* Note: /upload is now a valid endpoint (BUD-06), so it's not included here *)
   let invalid_paths = [
     "/";
-    "/upload";
     "/../etc/passwd";
     "/a/b/c";
   ] in

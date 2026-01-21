@@ -29,4 +29,7 @@ let () =
   Eio.traceln "\nCORS Tests:";
   List.iter (run_test ~sw ~env) E2e.Test_cors.tests;
 
+  Eio.traceln "\nHEAD /upload Tests (BUD-06):";
+  List.iter (run_test ~sw ~env) E2e.Test_head_upload.tests;
+
   Eio.traceln "\nDone."
