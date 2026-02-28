@@ -16,7 +16,7 @@ dune exec blossoML -- --port 8082  # Run the server
 
 Run unit tests (requires libsecp256k1):
 ```bash
-export DYLD_INSERT_LIBRARIES=/usr/local/lib/libsecp256k1.dylib && eval $(opam env) && dune runtest
+export DYLD_INSERT_LIBRARIES=/opt/homebrew/opt/secp256k1/lib/libsecp256k1.dylib && eval $(opam env) && dune runtest
 ```
 
 To run E2E tests (requires running server on localhost:8082):

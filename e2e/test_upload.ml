@@ -815,13 +815,17 @@ let test_upload_without_content_type ~sw ~env =
     if response.status <> 200 then
       failwith (Printf.sprintf "Upload without Content-Type returned status %d: %s" response.status response.body)
 
-(** Test: Upload with various Content-Type headers *)
+(** Test: Upload with various Content-Type headers
+    Note: MIME type is now determined by byte inspection first, then falls back to
+    client-provided Content-Type if detection fails. Since text content cannot be
+    detected by magic bytes, the fallback Content-Type is used. *)
 let test_upload_various_content_types ~sw ~env =
   let base_url = Config.base_url in
   let clock = Eio.Stdenv.clock env in
   let now = Eio.Time.now clock in
   let upload_url = base_url ^ "/upload" in
 
+  (* For text content that can't be detected, the fallback Content-Type is used *)
   let content_types = [
     "image/png";
     "image/jpeg";
@@ -857,7 +861,8 @@ let test_upload_various_content_types ~sw ~env =
       if response.status <> 200 then
         failwith (Printf.sprintf "Upload with Content-Type %s returned status %d" content_type response.status);
 
-      (* Verify the type is returned in response *)
+      (* Verify the type is returned in response
+         Since content is plain text, byte detection fails and fallback is used *)
       let json = Yojson.Safe.from_string response.body in
       let response_type = match json with
         | `Assoc fields ->
@@ -1109,6 +1114,54 @@ let test_upload_mime_sniffing ~sw ~env =
     if response_type <> "image/png" then
       failwith (Printf.sprintf "Expected MIME sniffing to detect 'image/png', got '%s'" response_type)
 
+(** Test: Byte inspection overrides client-provided Content-Type
+    When client says "text/plain" but content is actually PNG, server should detect PNG *)
+let test_upload_byte_detection_overrides_content_type ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+
+  (* PNG magic bytes + IHDR chunk - this IS a PNG file *)
+  let png_header = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" in
+  let content = png_header ^ String.make 100 '\000' in
+  let sha256 = sha256_hex content in
+
+  let keypair = Nostr_signer.generate_keypair () in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let upload_url = base_url ^ "/upload" in
+
+  (* Client claims it's text/plain, but it's actually PNG *)
+  let result = Http_client.put
+    ~sw ~env
+    ~url:upload_url
+    ~headers:[
+      ("Authorization", auth_header);
+      ("Content-Type", "text/plain");
+    ]
+    ~body:content
+    ()
+  in
+
+  match result with
+  | Error e -> failwith ("Upload failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Upload returned status %d: %s" response.status response.body);
+
+    (* Verify byte detection detected PNG, not the client's text/plain *)
+    let json = Yojson.Safe.from_string response.body in
+    let response_type = match json with
+      | `Assoc fields ->
+        (match List.assoc_opt "type" fields with
+         | Some (`String s) -> s
+         | _ -> failwith "No type in response")
+      | _ -> failwith "Invalid upload response format"
+    in
+    if response_type <> "image/png" then
+      failwith (Printf.sprintf "Expected byte detection to override Content-Type with 'image/png', got '%s'" response_type)
+
 (* Note: Tests for invalid/negative Content-Length are not possible in E2E tests
    because the HTTP client (Piaf/httpun) validates Content-Length before sending.
    These cases should be tested via unit tests if needed. *)
@@ -1209,6 +1262,7 @@ let tests = [
   ("upload special Content-Type", test_upload_special_content_type);
   ("upload with X-Content-Type", test_upload_with_x_content_type);
   ("upload MIME sniffing", test_upload_mime_sniffing);
+  ("upload byte detection overrides Content-Type", test_upload_byte_detection_overrides_content_type);
   ("upload Content-Length exceeds max", test_upload_content_length_exceeds_max);
   ("upload streaming exceeds max", test_upload_streaming_exceeds_max);
   ("HEAD request", test_head_request);

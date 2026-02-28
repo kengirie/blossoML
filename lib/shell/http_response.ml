@@ -39,6 +39,8 @@ type response_kind =
     (** 415 Unsupported Media Type *)
   | Error_internal of string
     (** 500 Internal Server Error *)
+  | Error_bad_gateway of string
+    (** 502 Bad Gateway *)
 
 (** CORSヘッダーのリスト
 
@@ -58,9 +60,9 @@ let cors_headers = [
 ]
 
 (** blob descriptorをJSON文字列に変換する純粋関数 *)
-let descriptor_to_json descriptor =
+let descriptor_to_json (descriptor : Domain.blob_descriptor) =
   `Assoc [
-    ("url", `String descriptor.Domain.url);
+    ("url", `String descriptor.url);
     ("sha256", `String descriptor.sha256);
     ("size", `Int descriptor.size);
     ("type", `String descriptor.mime_type);
@@ -149,3 +151,7 @@ let create = function
   | Error_internal message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Internal_server_error
+
+  | Error_bad_gateway message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
+      Response.create ~headers ~body:(Body.of_string message) `Bad_gateway

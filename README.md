@@ -10,7 +10,7 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 - [x] `DELETE /<sha256>` - Delete blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
 - [ ] `GET /list/<pubkey>` - List blobs ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))(Unrecommended)
 - [x] `HEAD /upload` - Upload requirements ([BUD-06](https://github.com/hzrd149/blossom/blob/master/buds/06.md))
-- [ ] `PUT /mirror` - Mirror blob ([BUD-04](https://github.com/hzrd149/blossom/blob/master/buds/04.md))
+- [x] `PUT /mirror` - Mirror blob ([BUD-04](https://github.com/hzrd149/blossom/blob/master/buds/04.md))
 - [ ] `HEAD /media` - Media optimization info ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
 - [ ] `PUT /media` - Media optimization ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
 - [ ] `PUT /report` - Blob report ([BUD-09](https://github.com/hzrd149/blossom/blob/master/buds/09.md))

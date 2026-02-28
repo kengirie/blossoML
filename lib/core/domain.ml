@@ -16,3 +16,11 @@ type error =
   | Forbidden of string             (* authorization failure -> 403 *)
   | Unsupported_media_type of string (* MIME type not allowed -> 415 *)
   | Invalid_content_type of string  (* malformed Content-Type -> 400 *)
+  | Mirror_invalid_url of string    (* invalid mirror URL -> 400 *)
+  | Mirror_fetch_error of string    (* remote fetch failed -> 502 *)
+  | Mirror_ssrf_blocked of string   (* SSRF protection blocked URL -> 400, detail for logging *)
+
+(** Mirror request body *)
+type mirror_request = {
+  url : string;
+}

@@ -33,8 +33,11 @@ let error_to_response_kind = function
   | Domain.Forbidden msg -> Http_response.Error_forbidden msg
   | Domain.Unsupported_media_type msg -> Http_response.Error_unsupported_media_type msg
   | Domain.Invalid_content_type msg -> Http_response.Error_bad_request msg
+  | Domain.Mirror_invalid_url msg -> Http_response.Error_bad_request msg
+  | Domain.Mirror_fetch_error msg -> Http_response.Error_bad_gateway msg
+  | Domain.Mirror_ssrf_blocked _msg -> Http_response.Error_bad_request "URL not allowed"
 
-let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
+let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
 
   (* レスポンス種別を決定 *)
@@ -139,9 +142,9 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
            match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
            | Error e -> error_to_response_kind e
            | Ok pubkey ->
-               (* Content-Type -> X-Content-Type -> default の優先順位で MIME type を取得 *)
-               (* 空文字列の場合もデフォルト値にフォールバック *)
-               let mime_type =
+               (* Content-Type -> X-Content-Type -> default の優先順位で fallback MIME type を取得 *)
+               (* バイト検査で検出できない場合のフォールバックとして使用 *)
+               let fallback_mime_type =
                  match Headers.get request.headers "content-type" with
                  | Some ct when String.length ct > 0 -> ct
                  | _ ->
@@ -163,35 +166,43 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                 | Error msg -> Http_response.Error_bad_request msg
                 | Ok content_length ->
                     let policy = Policy.default_policy in
-                    (* Content-Length が指定されている場合は事前チェック *)
-                    (match if content_length > 0 then Policy.check_upload_policy ~policy ~size:content_length ~mime:mime_type else Ok () with
+                    (* Content-Length が指定されている場合はサイズのみ事前チェック *)
+                    (match if content_length > 0 then Policy.check_size ~policy content_length else Ok () with
                      | Error e -> error_to_response_kind e
                      | Ok () ->
-                    (* Use original mime_type to preserve parameters like charset, boundary *)
-                    (* ストリーミング中にサイズ制限を適用 *)
-                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type ~uploader:pubkey ~max_size:policy.max_size with
+                    (* ストリーミング中にサイズ制限を適用、バイト検査でMIME type検出
+                       検出できない場合はクライアント提供のContent-Typeをフォールバックとして使用 *)
+                    (match BlobService.save ~storage:data_dir ~db ~body:request.body ~mime_type:fallback_mime_type ~uploader:pubkey ~max_size:policy.max_size with
                      | Error e ->
                          Eio.traceln "Save failed: %s" (match e with Domain.Storage_error m -> m | _ -> "Unknown error");
                          error_to_response_kind e
                      | Ok (hash, size, detected_mime_type) ->
-                         (* 保存後にSHA256とxタグの照合を行う *)
-                         (match Auth.validate_upload_auth ~header:auth_header ~sha256:hash ~current_time with
+                         (* 検出されたMIME typeでPolicyチェック *)
+                         (match Policy.check_mime_type ~policy detected_mime_type with
                           | Error e ->
-                              (* 照合失敗時はアップロードしたファイルを削除 *)
-                              Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
+                              (* MIME type Policy違反時はアップロードしたファイルを削除 *)
+                              Eio.traceln "MIME type policy violation, deleting uploaded blob: %s (type: %s)" hash detected_mime_type;
                               let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
                               error_to_response_kind e
-                          | Ok _ ->
-                              Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
-                              let descriptor = {
-                                Domain.url = Printf.sprintf "%s/%s" base_url hash;
-                                sha256 = hash;
-                                size = size;
-                                mime_type = detected_mime_type;
-                                uploaded = Int64.of_float (Eio.Time.now clock);
-                              } in
-                              Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
-                              Http_response.Success_upload descriptor)))))
+                          | Ok () ->
+                              (* SHA256とxタグの照合を行う *)
+                              (match Auth.validate_upload_auth ~header:auth_header ~sha256:hash ~current_time with
+                               | Error e ->
+                                   (* 照合失敗時はアップロードしたファイルを削除 *)
+                                   Eio.traceln "SHA256 mismatch, deleting uploaded blob: %s" hash;
+                                   let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
+                                   error_to_response_kind e
+                               | Ok _ ->
+                                   Eio.traceln "Upload successful: %s (%d bytes, %s)" hash size detected_mime_type;
+                                   let descriptor = {
+                                     Domain.url = Printf.sprintf "%s/%s" base_url hash;
+                                     sha256 = hash;
+                                     size = size;
+                                     mime_type = detected_mime_type;
+                                     uploaded = Int64.of_float (Eio.Time.now clock);
+                                   } in
+                                   Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
+                                   Http_response.Success_upload descriptor))))))
 
   | `DELETE, path ->
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
@@ -222,6 +233,61 @@ let request_handler ~sw ~clock ~data_dir ~db ~base_url { Server.Handler.request;
                               | _ -> "Unknown error");
                            error_to_response_kind e))
        | _ -> Http_response.Error_not_found "Invalid path")
+
+  | `PUT, "/mirror" ->
+      (* BUD-04: Mirror blob from remote URL *)
+      (match Headers.get request.headers "authorization" with
+       | None -> Http_response.Error_unauthorized "Missing Authorization header"
+       | Some auth_header ->
+           let current_time = Int64.of_float (Eio.Time.now clock) in
+           (* まず認証イベントの基本検証（署名、期限、アクションタイプ） *)
+           match Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time with
+           | Error e -> error_to_response_kind e
+           | Ok pubkey ->
+               (* リクエストボディをJSONとしてパース *)
+               let body_str =
+                 match Piaf.Body.to_string request.body with
+                 | Ok s -> s
+                 | Error _ -> ""
+               in
+               match Mirror.parse_request body_str with
+               | Error e -> error_to_response_kind e
+               | Ok mirror_req ->
+                   match Mirror.validate_url mirror_req.url with
+                   | Error e -> error_to_response_kind e
+                   | Ok () ->
+                       let policy = Policy.default_policy in
+                       (* リモートURLからblobをダウンロードして保存（バイト検査でMIME type検出） *)
+                       match BlobService.mirror ~sw ~env ~storage:data_dir ~db ~url:mirror_req.url ~uploader:pubkey ~max_size:policy.max_size with
+                       | Error e ->
+                           Eio.traceln "Mirror failed: %s" (match e with Domain.Mirror_fetch_error m -> m | Domain.Mirror_ssrf_blocked m -> m | Domain.Mirror_invalid_url m -> m | Domain.Storage_error m -> m | _ -> "Unknown error");
+                           error_to_response_kind e
+                       | Ok (hash, size, detected_mime_type) ->
+                           (* 検出されたMIME typeでPolicyチェック *)
+                           (match Policy.check_mime_type ~policy detected_mime_type with
+                            | Error e ->
+                                (* MIME type Policy違反時はミラーしたファイルを削除 *)
+                                Eio.traceln "MIME type policy violation for mirrored blob, deleting: %s (type: %s)" hash detected_mime_type;
+                                let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
+                                error_to_response_kind e
+                            | Ok () ->
+                                (* SHA256とxタグの照合を行う *)
+                                (match Auth.validate_upload_auth ~header:auth_header ~sha256:hash ~current_time with
+                                 | Error e ->
+                                     (* 照合失敗時はミラーしたファイルを削除 *)
+                                     Eio.traceln "SHA256 mismatch for mirrored blob, deleting: %s" hash;
+                                     let _ = BlobService.delete ~storage:data_dir ~db ~sha256:hash ~pubkey in
+                                     error_to_response_kind e
+                                 | Ok _ ->
+                                     Eio.traceln "Mirror successful: %s (%d bytes, %s)" hash size detected_mime_type;
+                                     let descriptor = {
+                                       Domain.url = Printf.sprintf "%s/%s" base_url hash;
+                                       sha256 = hash;
+                                       size = size;
+                                       mime_type = detected_mime_type;
+                                       uploaded = Int64.of_float (Eio.Time.now clock);
+                                     } in
+                                     Http_response.Success_upload descriptor)))
 
   | _ -> Http_response.Error_not_found "Not found"
   in
@@ -258,6 +324,6 @@ let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
       address
   in
 
-  let server = Server.create ~config (request_handler ~sw ~clock ~data_dir ~db ~base_url) in
+  let server = Server.create ~config (request_handler ~sw ~env ~clock ~data_dir ~db ~base_url) in
   let _ = Server.Command.start ~sw env server in
   ()
