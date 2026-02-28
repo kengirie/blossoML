@@ -40,6 +40,17 @@ module type S = sig
     sha256:string ->
     pubkey:string ->
     (unit, Domain.error) result
+
+  (** リモートURLからBlobをミラーリングする（BUD-04） *)
+  val mirror :
+    sw:Eio.Switch.t ->
+    env:Eio_unix.Stdenv.base ->
+    storage:storage ->
+    db:db ->
+    url:string ->
+    uploader:string ->
+    max_size:int ->
+    (string * int * string, Domain.error) result  (* sha256, size, mime_type *)
 end
 
 (** Blob_serviceファンクタ *)
@@ -49,22 +60,19 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
   type storage = Storage.t
   type db = Db.t
 
-  let save ~storage ~db ~body ~mime_type ~uploader ~max_size =
+  let save ~storage ~db ~body ~mime_type:fallback_mime_type ~uploader ~max_size =
     (* ストレージに保存（サイズ制限付き） *)
     match Storage.save storage ~body ~max_size with
     | Error e -> Error e
     | Ok result ->
-        (* MIME type がデフォルト値の場合、先頭チャンクから検出を試みる *)
+        (* MIME type は常にバイト検査を優先し、検出できない場合のみフォールバックを使用 *)
         let final_mime_type =
-          if mime_type = "application/octet-stream" then
-            match result.first_chunk with
-            | Some chunk ->
-                (match Mime_detect.detect_from_bytes chunk with
-                 | Some detected -> detected
-                 | None -> mime_type)
-            | None -> mime_type
-          else
-            mime_type
+          match result.first_chunk with
+          | Some chunk ->
+              (match Mime_detect.detect_from_bytes chunk with
+               | Some detected -> detected
+               | None -> fallback_mime_type)
+          | None -> fallback_mime_type
         in
 
         (* DBにメタデータを保存（既存blobの場合は何もしない） *)
@@ -194,4 +202,17 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
                            | Domain.Forbidden msg -> msg
                            | _ -> "Unknown error");
                         Error e
+
+  let mirror ~sw ~env ~storage ~db ~url ~uploader ~max_size =
+    (* 1. リモートURLからblobをダウンロード *)
+    match Http_client.fetch ~sw ~env url with
+    | Error e -> Error e
+    | Ok fetch_result ->
+        (* 2. MIME type はバイト検査で決定される（saveで実行）
+           フォールバックとして application/octet-stream を渡す
+           BUD-04仕様: Content-Type/URL拡張子はバイト検査失敗時のフォールバックとして使用可能だが、
+           現在はバイト検査を優先し、検出できない場合のみ octet-stream を使用 *)
+        let fallback_mime_type = "application/octet-stream" in
+        (* 3. 既存のsave関数を使用して保存（バイト検査はsave内で実行） *)
+        save ~storage ~db ~body:fetch_result.body ~mime_type:fallback_mime_type ~uploader ~max_size
 end
