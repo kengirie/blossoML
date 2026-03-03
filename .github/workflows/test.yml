@@ -34,6 +34,12 @@ jobs:
       - name: Build
         run: opam exec -- dune build
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blossoML-linux-amd64
+          path: _build/default/bin/main.exe
+
       - name: Find libsecp256k1
         run: |
           echo "Searching for libsecp256k1..."
