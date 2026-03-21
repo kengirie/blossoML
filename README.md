@@ -72,6 +72,8 @@ dune exec blossoML -- --host localhost --port 8080
 dune test
 ```
 
+## Acknowledgements
+This project was inspired by [Piaf](https://github.com/anmonteiro/piaf) and [Waq](https://github.com/ushitora-anqou/waq).
 ## License
 
-MIT
+MIT.
