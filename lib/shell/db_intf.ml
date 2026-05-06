@@ -59,4 +59,18 @@ module type S = sig
     t ->
     sha256:string ->
     (string list, Domain.error) result
+
+  (** 指定pubkeyが所有するBlobのリストを取得する（BUD-12）。
+      [since]/[until] は uploaded_at の閉区間フィルタ（包含）。
+      [cursor] は (uploaded_at, sha256) の組で、それより降順で「後ろ」のものを返す。
+      [limit] は返す最大件数。
+      結果は uploaded_at 降順、同値時は sha256 降順でソートされる。 *)
+  val list_by_pubkey :
+    t ->
+    pubkey:string ->
+    since:int64 ->
+    until:int64 ->
+    cursor:(int64 * string) option ->
+    limit:int ->
+    (Domain.blob_descriptor list, Domain.error) result
 end

@@ -35,4 +35,7 @@ let () =
   Eio.traceln "\nMirror Tests (BUD-04):";
   List.iter (run_test ~sw ~env) E2e.Test_mirror.tests;
 
+  Eio.traceln "\nList Tests (BUD-12):";
+  List.iter (run_test ~sw ~env) E2e.Test_list.tests;
+
   Eio.traceln "\nDone."

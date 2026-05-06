@@ -101,6 +101,28 @@ module Db = struct
     @@ {sql|
       SELECT pubkey FROM blob_owners WHERE sha256 = $1
     |sql}
+
+  (* list_blobs_by_pubkey: BUD-12 cursor-based pagination.
+     Args: pubkey, since, until, cursor_uploaded (0 = no cursor sentinel),
+           cursor_sha256, limit.
+     Returns: (sha256, uploaded_at, mime_type, size) sorted DESC. *)
+  let list_blobs_by_pubkey =
+    (t6 string int64 int64 int64 string int
+     ->* t4 string int64 (option string) (option int64))
+    @@ {sql|
+      SELECT b.sha256, b.uploaded_at, b.mime_type, b.size
+      FROM blobs b
+      JOIN blob_owners o ON o.sha256 = b.sha256
+      WHERE o.pubkey = $1
+        AND b.status = 'stored'
+        AND b.uploaded_at >= $2
+        AND b.uploaded_at <= $3
+        AND ( $4 = 0
+           OR b.uploaded_at < $4
+           OR (b.uploaded_at = $4 AND b.sha256 < $5) )
+      ORDER BY b.uploaded_at DESC, b.sha256 DESC
+      LIMIT $6
+    |sql}
 end
 
 type t = (Caqti_eio.connection, Caqti_error.t) Caqti_eio.Pool.t
@@ -214,6 +236,31 @@ let list_owners (pool : t) ~sha256 =
   | Ok owners -> Ok owners
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
+let list_by_pubkey (pool : t) ~pubkey ~since ~until ~cursor ~limit =
+  let cursor_uploaded, cursor_sha256 = match cursor with
+    | None -> 0L, ""
+    | Some (u, s) -> u, s
+  in
+  let result =
+    Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
+      C.collect_list Db.list_blobs_by_pubkey
+        (pubkey, since, until, cursor_uploaded, cursor_sha256, limit)
+    ) pool
+  in
+  match result with
+  | Ok rows ->
+      let descriptors = List.map (fun (sha, uploaded_at, mime, size) ->
+        {
+          Domain.sha256 = sha;
+          size = Option.value ~default:0 (Option.map Int64.to_int size);
+          mime_type = Option.value ~default:"application/octet-stream" mime;
+          uploaded = uploaded_at;
+          url = "/"; (* URL is filled in by Http_server *)
+        }) rows
+      in
+      Ok descriptors
+  | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
+
 (** Db_intf.S を満たすモジュール *)
 module Impl : Db_intf.S with type t = t = struct
   type nonrec t = t
@@ -225,4 +272,5 @@ module Impl : Db_intf.S with type t = t = struct
   let remove_owner = remove_owner
   let count_owners = count_owners
   let list_owners = list_owners
+  let list_by_pubkey = list_by_pubkey
 end

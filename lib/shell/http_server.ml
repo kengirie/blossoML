@@ -45,7 +45,9 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
   | `OPTIONS, _ ->
       Http_response.Cors_preflight
 
-  | `GET, path ->
+  | `GET, target ->
+      let uri = Uri.of_string target in
+      let path = Uri.path uri in
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
       Eio.traceln "Path parts: [%s]" (String.concat "; " path_parts);
       (match path_parts with
@@ -62,6 +64,71 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
                     size = metadata.size;
                   }
               | Error e -> error_to_response_kind e)
+       | ["list"; pubkey] ->
+           (* BUD-12: GET /list/<pubkey> *)
+           if not (Integrity.validate_hash pubkey) then
+             Http_response.Error_bad_request "Invalid pubkey format"
+           else
+             let parse_int64_param name =
+               match Uri.get_query_param uri name with
+               | None -> Ok None
+               | Some s ->
+                   (match Int64.of_string_opt s with
+                    | Some n when n >= 0L -> Ok (Some n)
+                    | _ -> Error (Printf.sprintf "Invalid %s parameter" name))
+             in
+             let parse_int_param name =
+               match Uri.get_query_param uri name with
+               | None -> Ok None
+               | Some s ->
+                   (match int_of_string_opt s with
+                    | Some n -> Ok (Some n)
+                    | None -> Error (Printf.sprintf "Invalid %s parameter" name))
+             in
+             (match parse_int64_param "since", parse_int64_param "until", parse_int_param "limit" with
+              | Error msg, _, _ | _, Error msg, _ | _, _, Error msg ->
+                  Http_response.Error_bad_request msg
+              | Ok since_opt, Ok until_opt, Ok limit_opt ->
+                  let since = Option.value since_opt ~default:0L in
+                  let until = Option.value until_opt ~default:Int64.max_int in
+                  let limit = match limit_opt with
+                    | Some n -> max 1 (min 1000 n)
+                    | None -> 50
+                  in
+                  let cursor_result =
+                    match Uri.get_query_param uri "cursor" with
+                    | None -> Ok None
+                    | Some sha ->
+                        if not (Integrity.validate_hash sha) then
+                          Error "Invalid cursor"
+                        else
+                          (match BlobService.get_metadata ~storage:data_dir ~db ~sha256:sha with
+                           | Ok meta -> Ok (Some (meta.uploaded, sha))
+                           | Error _ -> Error "Invalid cursor")
+                  in
+                  (match cursor_result with
+                   | Error msg -> Http_response.Error_bad_request msg
+                   | Ok cursor ->
+                       (* Authorization is optional for /list (BUD-11/BUD-12) *)
+                       let auth_check =
+                         match Headers.get request.headers "authorization" with
+                         | None -> Ok ()
+                         | Some auth_header ->
+                             let current_time = Int64.of_float (Eio.Time.now clock) in
+                             (match Auth.validate_auth ~header:auth_header ~action:Auth.List ~current_time with
+                              | Ok _ -> Ok ()
+                              | Error e -> Error e)
+                       in
+                       (match auth_check with
+                        | Error e -> error_to_response_kind e
+                        | Ok () ->
+                            match Blossom_db.list_by_pubkey db ~pubkey ~since ~until ~cursor ~limit with
+                            | Error e -> error_to_response_kind e
+                            | Ok descriptors ->
+                                let descriptors = List.map (fun (d : Domain.blob_descriptor) ->
+                                  { d with Domain.url = Printf.sprintf "%s/%s" base_url d.sha256 }
+                                ) descriptors in
+                                Http_response.Success_list descriptors)))
        | _ -> Http_response.Error_not_found "Invalid path")
 
   | `HEAD, "/upload" ->

@@ -17,6 +17,8 @@ type response_kind =
     (** Blobメタデータの取得成功（HEADリクエスト用） *)
   | Success_upload of Domain.blob_descriptor
     (** Blobアップロード成功 *)
+  | Success_list of Domain.blob_descriptor list
+    (** Blob list取得成功（BUD-12 GET /list/<pubkey>） *)
   | Success_delete
     (** Blob削除成功 *)
   | Success_upload_check
@@ -59,8 +61,8 @@ let cors_headers = [
   ("access-control-max-age", "86400");
 ]
 
-(** blob descriptorをJSON文字列に変換する純粋関数 *)
-let descriptor_to_json (descriptor : Domain.blob_descriptor) =
+(** blob descriptorをYojson値に変換する純粋関数 *)
+let descriptor_to_yojson (descriptor : Domain.blob_descriptor) : Yojson.Basic.t =
   `Assoc [
     ("url", `String descriptor.url);
     ("sha256", `String descriptor.sha256);
@@ -68,7 +70,10 @@ let descriptor_to_json (descriptor : Domain.blob_descriptor) =
     ("type", `String descriptor.mime_type);
     ("uploaded", `Int (Int64.to_int descriptor.uploaded));
   ]
-  |> Yojson.Basic.to_string
+
+(** blob descriptorをJSON文字列に変換する純粋関数 *)
+let descriptor_to_json (descriptor : Domain.blob_descriptor) =
+  descriptor_to_yojson descriptor |> Yojson.Basic.to_string
 
 (** レスポンスの種類から実際のHTTPレスポンスを生成する純粋関数
 
@@ -100,6 +105,16 @@ let create = function
 
   | Success_upload descriptor ->
       let json = descriptor_to_json descriptor in
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", "application/json");
+      ]) in
+      Response.create ~headers ~body:(Body.of_string json) `OK
+
+  | Success_list descriptors ->
+      let json =
+        `List (List.map descriptor_to_yojson descriptors)
+        |> Yojson.Basic.to_string
+      in
       let headers = Headers.of_list (cors_headers @ [
         ("content-type", "application/json");
       ]) in
