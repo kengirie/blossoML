@@ -323,7 +323,25 @@ let test_mirror_response_format ~sw ~env =
       (* Check uploaded field *)
       (match List.assoc_opt "uploaded" fields with
        | Some (`Int _) -> ()
-       | _ -> failwith "Missing or invalid 'uploaded' field")
+       | _ -> failwith "Missing or invalid 'uploaded' field");
+
+      (* BUD-08: Check nip94 field exists with required tags *)
+      (match List.assoc_opt "nip94" fields with
+       | Some (`List entries) ->
+         let pairs = List.map (fun entry ->
+           match entry with
+           | `List [`String k; `String v] -> (k, v)
+           | _ -> failwith "Invalid nip94 entry shape"
+         ) entries in
+         List.iter (fun key ->
+           if not (List.mem_assoc key pairs) then
+             failwith (Printf.sprintf "nip94 missing required '%s' tag" key)
+         ) ["url"; "m"; "x"; "ox"; "size"];
+         (match List.assoc_opt "x" pairs with
+          | Some x when x = sha256 -> ()
+          | Some x -> failwith (Printf.sprintf "nip94 x mismatch: expected %s, got %s" sha256 x)
+          | None -> failwith "nip94 missing 'x' tag")
+       | _ -> failwith "Missing or invalid 'nip94' field")
     | _ -> failwith "Response is not a JSON object"
 
 (** Helper: make an authenticated mirror request and return the response *)

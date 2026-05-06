@@ -61,19 +61,33 @@ let cors_headers = [
   ("access-control-max-age", "86400");
 ]
 
-(** blob descriptorをYojson値に変換する純粋関数 *)
-let descriptor_to_yojson (descriptor : Domain.blob_descriptor) : Yojson.Basic.t =
-  `Assoc [
+(** NIP-94タグ ([("k", "v"); ...]) を JSON 配列 [["k","v"],...] に変換 *)
+let nip94_tags_to_yojson (tags : (string * string) list) : Yojson.Basic.t =
+  `List (List.map (fun (k, v) -> `List [`String k; `String v]) tags)
+
+(** blob descriptorをYojson値に変換する純粋関数
+
+    [include_nip94] が true のとき、BUD-08 に従って [nip94] フィールドを追加する。
+    [/upload], [/mirror] のレスポンスでのみ true を渡す。 *)
+let descriptor_to_yojson ?(include_nip94 = false) (descriptor : Domain.blob_descriptor) : Yojson.Basic.t =
+  let base = [
     ("url", `String descriptor.url);
     ("sha256", `String descriptor.sha256);
     ("size", `Int descriptor.size);
     ("type", `String descriptor.mime_type);
     ("uploaded", `Int (Int64.to_int descriptor.uploaded));
-  ]
+  ] in
+  let fields =
+    if include_nip94 then
+      base @ [("nip94", nip94_tags_to_yojson (Nip94.tags_of_descriptor descriptor))]
+    else
+      base
+  in
+  `Assoc fields
 
 (** blob descriptorをJSON文字列に変換する純粋関数 *)
-let descriptor_to_json (descriptor : Domain.blob_descriptor) =
-  descriptor_to_yojson descriptor |> Yojson.Basic.to_string
+let descriptor_to_json ?(include_nip94 = false) (descriptor : Domain.blob_descriptor) =
+  descriptor_to_yojson ~include_nip94 descriptor |> Yojson.Basic.to_string
 
 (** レスポンスの種類から実際のHTTPレスポンスを生成する純粋関数
 
@@ -104,7 +118,8 @@ let create = function
       Response.create ~headers `OK
 
   | Success_upload descriptor ->
-      let json = descriptor_to_json descriptor in
+      (* BUD-08: /upload と /mirror のレスポンスには nip94 フィールドを含める *)
+      let json = descriptor_to_json ~include_nip94:true descriptor in
       let headers = Headers.of_list (cors_headers @ [
         ("content-type", "application/json");
       ]) in

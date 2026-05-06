@@ -54,6 +54,67 @@ let test_success_upload () =
   check int "Status code" 200 (get_status response);
   check_cors_headers response
 
+(* BUD-08: Success_upload should include nip94 field and preserve base fields *)
+let test_success_upload_includes_nip94 () =
+  let descriptor = {
+    Domain.url = "http://localhost:8082/abc123";
+    sha256 = "abc123";
+    size = 500;
+    mime_type = "application/pdf";
+    uploaded = 1234567890L;
+  } in
+  let response = Http_response.create (Success_upload descriptor) in
+  let body = match Response.body response |> Body.to_string with
+    | Ok s -> s
+    | Error _ -> failwith "Failed to read body"
+  in
+  let json = Yojson.Basic.from_string body in
+  let open Yojson.Basic.Util in
+  (* Base descriptor fields must still be present alongside nip94 *)
+  check string "base url" "http://localhost:8082/abc123" (json |> member "url" |> to_string);
+  check string "base sha256" "abc123" (json |> member "sha256" |> to_string);
+  check int "base size" 500 (json |> member "size" |> to_int);
+  check string "base type" "application/pdf" (json |> member "type" |> to_string);
+  check int "base uploaded" 1234567890 (json |> member "uploaded" |> to_int);
+  let nip94 = json |> member "nip94" in
+  (match nip94 with
+   | `Null -> failwith "Missing nip94 field"
+   | _ -> ());
+  let pairs = nip94 |> to_list |> List.map (fun item ->
+    match item |> to_list with
+    | [`String k; `String v] -> (k, v)
+    | _ -> failwith "Invalid nip94 entry"
+  ) in
+  let lookup k =
+    match List.assoc_opt k pairs with
+    | Some v -> v
+    | None -> Alcotest.failf "nip94 missing %s tag" k
+  in
+  check string "url tag" "http://localhost:8082/abc123" (lookup "url");
+  check string "m tag" "application/pdf" (lookup "m");
+  check string "x tag" "abc123" (lookup "x");
+  check string "ox tag" "abc123" (lookup "ox");
+  check string "size tag" "500" (lookup "size")
+
+(* BUD-08: Success_list should NOT include nip94 *)
+let test_success_list_no_nip94 () =
+  let descriptors = [{
+    Domain.url = "http://localhost:8082/aaa";
+    sha256 = "aaa";
+    size = 100;
+    mime_type = "text/plain";
+    uploaded = 1000L;
+  }] in
+  let response = Http_response.create (Success_list descriptors) in
+  let body = match Response.body response |> Body.to_string with
+    | Ok s -> s
+    | Error _ -> failwith "Failed to read body"
+  in
+  let json = Yojson.Basic.from_string body in
+  let open Yojson.Basic.Util in
+  let first = json |> to_list |> List.hd in
+  check bool "list entries have no nip94" true (first |> member "nip94" = `Null)
+
 (* Success_delete レスポンステスト *)
 let test_success_delete () =
   let response = Http_response.create Success_delete in
@@ -224,6 +285,8 @@ let tests = [
   test_case "Success_blob response" `Quick test_success_blob;
   test_case "Success_metadata response" `Quick test_success_metadata;
   test_case "Success_upload response" `Quick test_success_upload;
+  test_case "Success_upload includes nip94 (BUD-08)" `Quick test_success_upload_includes_nip94;
+  test_case "Success_list excludes nip94 (BUD-08)" `Quick test_success_list_no_nip94;
   test_case "Success_list empty response" `Quick test_success_list_empty;
   test_case "Success_list populated response" `Quick test_success_list_populated;
   test_case "Success_delete response" `Quick test_success_delete;
