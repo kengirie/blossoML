@@ -147,7 +147,7 @@ let init ~env ~sw ~dir =
       | Ok () -> Ok pool
       | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let save (pool : t) ~sha256 ~size ~mime_type =
+let save pool ~sha256 ~size ~mime_type =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.exec Db.save_blob (sha256, Some mime_type, Some (Int64.of_int size))
@@ -157,7 +157,7 @@ let save (pool : t) ~sha256 ~size ~mime_type =
   | Ok () -> Ok ()
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let get (pool : t) ~sha256 =
+let get pool ~sha256 =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.find_opt Db.get_blob sha256
@@ -175,7 +175,7 @@ let get (pool : t) ~sha256 =
   | Ok None -> Error (Domain.Blob_not_found sha256)
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let delete (pool : t) ~sha256 =
+let delete pool ~sha256 =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.exec Db.delete_blob sha256
@@ -185,7 +185,7 @@ let delete (pool : t) ~sha256 =
   | Ok () -> Ok ()
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let add_owner (pool : t) ~sha256 ~pubkey =
+let add_owner pool ~sha256 ~pubkey =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.exec Db.add_owner (sha256, pubkey)
@@ -195,7 +195,7 @@ let add_owner (pool : t) ~sha256 ~pubkey =
   | Ok () -> Ok ()
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let has_owner (pool : t) ~sha256 ~pubkey =
+let has_owner pool ~sha256 ~pubkey =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.find_opt Db.has_owner (sha256, pubkey)
@@ -206,7 +206,7 @@ let has_owner (pool : t) ~sha256 ~pubkey =
   | Ok None -> Ok false
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let remove_owner (pool : t) ~sha256 ~pubkey =
+let remove_owner pool ~sha256 ~pubkey =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.exec Db.remove_owner (sha256, pubkey)
@@ -216,7 +216,7 @@ let remove_owner (pool : t) ~sha256 ~pubkey =
   | Ok () -> Ok ()
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let count_owners (pool : t) ~sha256 =
+let count_owners pool ~sha256 =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.find Db.count_owners sha256
@@ -226,7 +226,7 @@ let count_owners (pool : t) ~sha256 =
   | Ok count -> Ok count
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let list_owners (pool : t) ~sha256 =
+let list_owners pool ~sha256 =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
       C.collect_list Db.list_owners sha256
@@ -236,7 +236,7 @@ let list_owners (pool : t) ~sha256 =
   | Ok owners -> Ok owners
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
-let list_by_pubkey (pool : t) ~pubkey ~since ~until ~cursor ~limit =
+let list_by_pubkey pool ~pubkey ~since ~until ~cursor ~limit =
   let cursor_uploaded, cursor_sha256 = match cursor with
     | None -> 0L, ""
     | Some (u, s) -> u, s

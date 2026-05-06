@@ -113,7 +113,7 @@ let make_ssrf_env
     2. [Ssrf_network.getaddrinfo] — DNS resolution validates all IPs before
        Piaf connects (same resolution path = no DNS rebinding)
     3. Redirect rejection — 3xx responses are blocked *)
-let fetch ~sw ~env (url : string) : (fetch_result, Domain.error) result =
+let fetch ~sw ~env url =
   (* 1. Pure URL validation: scheme + IP literal + localhost *)
   match Mirror.validate_url_ssrf url with
   | Error e -> Error e

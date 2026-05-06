@@ -19,7 +19,7 @@ let database = Conan.Process.database ~tree:combined_tree
 
 (** Detect MIME type from bytes content using magic bytes analysis.
     Returns [Some mime_type] if detected, [None] otherwise. *)
-let detect_from_bytes (content : string) : string option =
+let detect_from_bytes content =
   match Conan_string.run ~database content with
   | Ok metadata -> Conan.Metadata.mime metadata
   | Error _ -> None

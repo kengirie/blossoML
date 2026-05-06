@@ -1,7 +1,7 @@
 (** Mirror request parsing and URL validation for BUD-04 *)
 
 (** Parse mirror request JSON body: {"url": "https://..."} *)
-let parse_request (json_str : string) : (Domain.mirror_request, Domain.error) result =
+let parse_request json_str =
   try
     let json = Yojson.Safe.from_string json_str in
     match json with
@@ -16,7 +16,7 @@ let parse_request (json_str : string) : (Domain.mirror_request, Domain.error) re
       Error (Domain.Mirror_invalid_url (Printf.sprintf "invalid JSON: %s" msg))
 
 (** Validate mirror URL: must be http or https *)
-let validate_url (url : string) : (unit, Domain.error) result =
+let validate_url url =
   (* Basic URL validation - must start with http:// or https:// *)
   let url_lower = String.lowercase_ascii url in
   if String.length url < 8 then
@@ -27,7 +27,7 @@ let validate_url (url : string) : (unit, Domain.error) result =
     Ok ()
 
 (** Extract file extension from URL path for MIME type inference *)
-let extension_from_url (url : string) : string option =
+let extension_from_url url =
   (* Remove query string and fragment *)
   let path =
     let without_fragment =
@@ -61,7 +61,7 @@ type host_kind =
 
 (** Extract host from URL (without port or brackets).
     Returns the bare host string and whether it was bracket-enclosed. *)
-let extract_host_kind (url : string) : (host_kind, Domain.error) result =
+let extract_host_kind url =
   let url_lower = String.lowercase_ascii url in
   let after_scheme =
     if String.length url_lower >= 8 && String.sub url_lower 0 8 = "https://" then
@@ -121,7 +121,7 @@ let extract_host_kind (url : string) : (host_kind, Domain.error) result =
 
 (** Extract host from URL (without port or brackets).
     Returns the bare host string for IP literal or hostname. *)
-let extract_host (url : string) : (string, Domain.error) result =
+let extract_host url =
   match extract_host_kind url with
   | Ok (Bracketed h) -> Ok h
   | Ok (Unbracketed h) -> Ok h
@@ -129,7 +129,7 @@ let extract_host (url : string) : (string, Domain.error) result =
 
 (** Parse IPv4 address string "a.b.c.d" to 4-element int array of octets.
     Returns None if format is invalid or any octet is out of [0,255]. *)
-let parse_ipv4 (s : string) : int array option =
+let parse_ipv4 s =
   let parts = String.split_on_char '.' s in
   if List.length parts <> 4 then None
   else
@@ -145,7 +145,7 @@ let parse_ipv4 (s : string) : int array option =
 
 (** Check if IPv4 octets represent a dangerous address.
     Returns Ok () for safe addresses, Error reason for dangerous ones. *)
-let check_ipv4_safety (octets : int array) : (unit, string) result =
+let check_ipv4_safety octets =
   if Array.length octets <> 4 then Error "invalid IPv4 address"
   else
     let a = octets.(0) and b = octets.(1)
@@ -171,7 +171,7 @@ let check_ipv4_safety (octets : int array) : (unit, string) result =
       Ok ()
 
 (** Parse a single hex group (1-4 hex digits) to a 16-bit integer. *)
-let parse_hex_group (s : string) : int option =
+let parse_hex_group s =
   if String.length s = 0 || String.length s > 4 then None
   else
     match int_of_string_opt ("0x" ^ s) with
@@ -180,7 +180,7 @@ let parse_hex_group (s : string) : int option =
 
 (** Parse IPv6 address string to 8-element array of 16-bit groups.
     Handles :: expansion and IPv4-mapped suffix (::ffff:a.b.c.d). *)
-let parse_ipv6_groups (s : string) : int array option =
+let parse_ipv6_groups s =
   let find_double_colon str =
     let len = String.length str in
     let rec scan i =
@@ -243,7 +243,7 @@ let parse_ipv6_groups (s : string) : int array option =
 
 (** Check if IPv6 groups represent a dangerous address.
     Returns Ok () for safe addresses, Error reason for dangerous ones. *)
-let check_ipv6_safety (groups : int array) : (unit, string) result =
+let check_ipv6_safety groups =
   if Array.length groups <> 8 then Error "invalid IPv6 address"
   else
     let is_all_zero = Array.for_all (fun g -> g = 0) groups in
@@ -286,7 +286,7 @@ let check_ipv6_safety (groups : int array) : (unit, string) result =
 (** Validate an IP address string for SSRF safety.
     Tries IPv4 first, then IPv6.
     Returns Ok () for safe IPs, Error reason for dangerous ones. *)
-let validate_ip_string (ip : string) : (unit, string) result =
+let validate_ip_string ip =
   match parse_ipv4 ip with
   | Some octets -> check_ipv4_safety octets
   | None ->
@@ -298,7 +298,7 @@ let validate_ip_string (ip : string) : (unit, string) result =
     Checks scheme, extracts host, and validates IP literal hosts.
     Bracket hosts that fail IP parsing are rejected (e.g. zone identifiers).
     Hostname-based hosts pass here; they are validated after DNS resolution in the shell layer. *)
-let validate_url_ssrf (url : string) : (unit, Domain.error) result =
+let validate_url_ssrf url =
   match validate_url url with
   | Error e -> Error e
   | Ok () ->
