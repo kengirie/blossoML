@@ -107,6 +107,58 @@ let test_error_internal () =
   check (option string) "X-Reason header" (Some "Database error") (get_header response "x-reason");
   check_cors_headers response
 
+(* Success_list レスポンステスト（空配列） *)
+let test_success_list_empty () =
+  let response = Http_response.create (Success_list []) in
+  check int "Status code" 200 (get_status response);
+  check (option string) "Content-Type header" (Some "application/json") (get_header response "content-type");
+  check_cors_headers response;
+  let body = match Response.body response |> Body.to_string with
+    | Ok s -> s
+    | Error _ -> failwith "Failed to read body"
+  in
+  check string "Empty array body" "[]" body
+
+(* Success_list レスポンステスト（複数） *)
+let test_success_list_populated () =
+  let descriptors = [
+    {
+      Domain.url = "http://localhost:8082/aaa";
+      sha256 = "aaa";
+      size = 100;
+      mime_type = "text/plain";
+      uploaded = 1000L;
+    };
+    {
+      Domain.url = "http://localhost:8082/bbb";
+      sha256 = "bbb";
+      size = 200;
+      mime_type = "image/png";
+      uploaded = 2000L;
+    };
+  ] in
+  let response = Http_response.create (Success_list descriptors) in
+  check int "Status code" 200 (get_status response);
+  check (option string) "Content-Type header" (Some "application/json") (get_header response "content-type");
+  check_cors_headers response;
+  let body = match Response.body response |> Body.to_string with
+    | Ok s -> s
+    | Error _ -> failwith "Failed to read body"
+  in
+  let json = Yojson.Basic.from_string body in
+  let open Yojson.Basic.Util in
+  let items = json |> to_list in
+  check int "Array length" 2 (List.length items);
+  let first = List.nth items 0 in
+  check string "First sha256" "aaa" (first |> member "sha256" |> to_string);
+  check string "First url" "http://localhost:8082/aaa" (first |> member "url" |> to_string);
+  check int "First size" 100 (first |> member "size" |> to_int);
+  check string "First type" "text/plain" (first |> member "type" |> to_string);
+  check int "First uploaded" 1000 (first |> member "uploaded" |> to_int);
+  let second = List.nth items 1 in
+  check string "Second sha256" "bbb" (second |> member "sha256" |> to_string);
+  check string "Second type" "image/png" (second |> member "type" |> to_string)
+
 (* descriptor_to_json テスト *)
 let test_descriptor_to_json () =
   let descriptor = {
@@ -172,6 +224,8 @@ let tests = [
   test_case "Success_blob response" `Quick test_success_blob;
   test_case "Success_metadata response" `Quick test_success_metadata;
   test_case "Success_upload response" `Quick test_success_upload;
+  test_case "Success_list empty response" `Quick test_success_list_empty;
+  test_case "Success_list populated response" `Quick test_success_list_populated;
   test_case "Success_delete response" `Quick test_success_delete;
   test_case "Success_upload_check response" `Quick test_success_upload_check;
   test_case "Cors_preflight response" `Quick test_cors_preflight;

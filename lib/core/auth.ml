@@ -1,11 +1,12 @@
 (** Blossom authentication for kind 24242 events (BUD-01/BUD-02). *)
 
-type action = Upload | Download | Delete
+type action = Upload | Download | Delete | List
 
 let action_to_string = function
   | Upload -> "upload"
   | Download -> "get"
   | Delete -> "delete"
+  | List -> "list"
 
 (* Validate that x tag contains the specified hash *)
 let validate_x_tag event ~sha256 =

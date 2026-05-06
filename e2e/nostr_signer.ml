@@ -77,6 +77,28 @@ let create_delete_auth ~keypair ~sha256 ~created_at ~expiration =
   | Ok (sig_, _) ->
     { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
 
+(** Create a BUD-12 list authentication event (kind 24242).
+    The event authorizes listing blobs for the requesting pubkey. *)
+let create_list_auth ~keypair ~created_at ~expiration =
+  let created_at = Int64.of_float created_at in
+  let tags = [
+    ["t"; "list"];
+    ["expiration"; Int64.to_string expiration];
+  ] in
+  let content = "List blobs" in
+  let kind = 24242 in
+  let id = Nostr_event.compute_id
+    ~pubkey:keypair.pubkey
+    ~created_at
+    ~kind
+    ~tags
+    ~content
+  in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign list auth event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
 (** Convert a Nostr event to JSON string. *)
 let event_to_json event =
   let open Nostr_event in
