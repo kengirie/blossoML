@@ -7,13 +7,21 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 - [x] `GET /<sha256>` - Get blob ([BUD-01](https://github.com/hzrd149/blossom/blob/master/buds/01.md))
 - [x] `HEAD /<sha256>` - Has blob ([BUD-01](https://github.com/hzrd149/blossom/blob/master/buds/01.md))
 - [x] `PUT /upload` - Upload blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
-- [x] `DELETE /<sha256>` - Delete blob ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))
-- [ ] `GET /list/<pubkey>` - List blobs ([BUD-02](https://github.com/hzrd149/blossom/blob/master/buds/02.md))(Unrecommended)
 - [x] `HEAD /upload` - Upload requirements ([BUD-06](https://github.com/hzrd149/blossom/blob/master/buds/06.md))
 - [x] `PUT /mirror` - Mirror blob ([BUD-04](https://github.com/hzrd149/blossom/blob/master/buds/04.md))
+- [x] `DELETE /<sha256>` - Delete blob ([BUD-12](https://github.com/hzrd149/blossom/blob/master/buds/12.md))
+- [x] `GET /list/<pubkey>` - List blobs ([BUD-12](https://github.com/hzrd149/blossom/blob/master/buds/12.md)) _(unrecommended)_
 - [ ] `HEAD /media` - Media optimization info ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
 - [ ] `PUT /media` - Media optimization ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
 - [ ] `PUT /report` - Blob report ([BUD-09](https://github.com/hzrd149/blossom/blob/master/buds/09.md))
+
+### Other BUDs
+
+- [x] Nostr Authorization (`kind:24242`) ([BUD-11](https://github.com/hzrd149/blossom/blob/master/buds/11.md))
+- [ ] Nostr File Metadata Tags (`nip94` in blob descriptor) ([BUD-08](https://github.com/hzrd149/blossom/blob/master/buds/08.md))
+- [ ] Payment Required (`402` + `X-Cashu` / `X-Lightning`) ([BUD-07](https://github.com/hzrd149/blossom/blob/master/buds/07.md))
+
+BUD-03 (User Server List) and BUD-10 (Blossom URI Schema) are client-side specifications and do not apply to server implementations.
 
 ## Technology Stack
 
