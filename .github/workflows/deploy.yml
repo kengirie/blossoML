@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.2"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev libffi-dev pkg-config libsqlite3-dev libsecp256k1-dev
+
+      - name: Add opam repositories
+        run: |
+          opam repo add --all --set-default default git+https://github.com/ocaml/opam-repository.git
+
+      - name: Install dependencies
+        run: opam install . --deps-only -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.ORACLE_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload binary to server
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            _build/default/bin/main.exe \
+            ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }}:/home/ubuntu/blossoML/main.exe.new
+
+      - name: Swap binary and restart service
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} bash <<'EOF'
+            set -euo pipefail
+            cd /home/ubuntu/blossoML
+            chmod +x main.exe.new
+            [ -f main.exe ] && cp main.exe main.exe.backup
+            mv main.exe.new main.exe
+            sudo systemctl restart blossoml
+            sleep 2
+            sudo systemctl status blossoml --no-pager
+          EOF
