@@ -18,7 +18,7 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 ### Other BUDs
 
 - [x] Nostr Authorization (`kind:24242`) ([BUD-11](https://github.com/hzrd149/blossom/blob/master/buds/11.md))
-- [ ] Nostr File Metadata Tags (`nip94` in blob descriptor) ([BUD-08](https://github.com/hzrd149/blossom/blob/master/buds/08.md))
+- [x] Nostr File Metadata Tags (`nip94` in blob descriptor) ([BUD-08](https://github.com/hzrd149/blossom/blob/master/buds/08.md))
 - [ ] Payment Required (`402` + `X-Cashu` / `X-Lightning`) ([BUD-07](https://github.com/hzrd149/blossom/blob/master/buds/07.md))
 
 BUD-03 (User Server List) and BUD-10 (Blossom URI Schema) are client-side specifications and do not apply to server implementations.

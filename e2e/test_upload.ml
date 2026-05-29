@@ -945,7 +945,32 @@ let test_upload_response_format ~sw ~env =
       (* Check uploaded field (timestamp) *)
       (match List.assoc_opt "uploaded" fields with
        | Some (`Int _) -> ()
-       | _ -> failwith "Missing or invalid 'uploaded' field")
+       | _ -> failwith "Missing or invalid 'uploaded' field");
+
+      (* BUD-08: Check nip94 field *)
+      (match List.assoc_opt "nip94" fields with
+       | Some (`List entries) ->
+         let pairs = List.map (fun entry ->
+           match entry with
+           | `List [`String k; `String v] -> (k, v)
+           | _ -> failwith "Invalid nip94 entry shape"
+         ) entries in
+         (match List.assoc_opt "url" pairs with
+          | Some _ -> ()
+          | None -> failwith "nip94 missing 'url' tag");
+         (match List.assoc_opt "m" pairs with
+          | Some m when m = "text/plain" -> ()
+          | Some m -> failwith (Printf.sprintf "nip94 m mismatch: expected text/plain, got %s" m)
+          | None -> failwith "nip94 missing 'm' tag");
+         (match List.assoc_opt "x" pairs with
+          | Some x when x = sha256 -> ()
+          | Some x -> failwith (Printf.sprintf "nip94 x mismatch: expected %s, got %s" sha256 x)
+          | None -> failwith "nip94 missing 'x' tag");
+         (match List.assoc_opt "size" pairs with
+          | Some s when s = string_of_int (String.length content) -> ()
+          | Some s -> failwith (Printf.sprintf "nip94 size mismatch: got %s" s)
+          | None -> failwith "nip94 missing 'size' tag")
+       | _ -> failwith "Missing or invalid 'nip94' field")
     | _ -> failwith "Response is not a JSON object"
 
 (** Test: Upload with very long Content-Type *)

@@ -11,4 +11,5 @@ let () =
     "Nostr_event", Test_nostr_event.tests;
     "Nostr_signer", Test_nostr_signer.tests;
     "Mirror", Test_mirror.tests;
+    "Nip94", Test_nip94.tests;
   ]

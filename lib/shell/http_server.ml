@@ -268,7 +268,7 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
                                      mime_type = detected_mime_type;
                                      uploaded = Int64.of_float (Eio.Time.now clock);
                                    } in
-                                   Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json descriptor);
+                                   Eio.traceln "Upload response: %s" (Http_response.descriptor_to_json ~include_nip94:true descriptor);
                                    Http_response.Success_upload descriptor))))))
 
   | `DELETE, path ->
@@ -354,6 +354,7 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
                                        mime_type = detected_mime_type;
                                        uploaded = Int64.of_float (Eio.Time.now clock);
                                      } in
+                                     Eio.traceln "Mirror response: %s" (Http_response.descriptor_to_json ~include_nip94:true descriptor);
                                      Http_response.Success_upload descriptor)))
 
   | _ -> Http_response.Error_not_found "Not found"
