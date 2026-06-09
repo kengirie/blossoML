@@ -19,6 +19,7 @@ type error =
   | Mirror_invalid_url of string    (* invalid mirror URL -> 400 *)
   | Mirror_fetch_error of string    (* remote fetch failed -> 502 *)
   | Mirror_ssrf_blocked of string   (* SSRF protection blocked URL -> 400, detail for logging *)
+  | Report_error of string          (* invalid NIP-56 report event -> 400 *)
 
 (** Mirror request body *)
 type mirror_request = {

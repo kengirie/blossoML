@@ -38,4 +38,7 @@ let () =
   Eio.traceln "\nList Tests (BUD-12):";
   List.iter (run_test ~sw ~env) E2e.Test_list.tests;
 
+  Eio.traceln "\nReport Tests (BUD-09):";
+  List.iter (run_test ~sw ~env) E2e.Test_report.tests;
+
   Eio.traceln "\nDone."

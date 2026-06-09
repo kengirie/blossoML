@@ -23,6 +23,10 @@ type response_kind =
     (** Blob削除成功 *)
   | Success_upload_check
     (** アップロード事前チェック成功（HEAD /upload用） *)
+  | Success_report
+    (** BUD-09: PUT /report 受理成功 *)
+  | Success_terms_of_service of string
+    (** BUD-09: GET / で返すサーバー規約（text/plain） *)
   | Cors_preflight
     (** CORSプリフライトレスポンス *)
   | Error_not_found of string
@@ -130,6 +134,19 @@ let create = function
   | Success_upload_check ->
       let headers = Headers.of_list cors_headers in
       Response.create ~headers `OK
+
+  | Success_report ->
+      let json = `Assoc [("message", `String "Report received")] |> Yojson.Basic.to_string in
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", "application/json");
+      ]) in
+      Response.create ~headers ~body:(Body.of_string json) `OK
+
+  | Success_terms_of_service body ->
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", "text/plain; charset=utf-8");
+      ]) in
+      Response.create ~headers ~body:(Body.of_string body) `OK
 
   | Cors_preflight ->
       let headers = Headers.of_list cors_headers in

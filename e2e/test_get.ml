@@ -254,12 +254,12 @@ let test_get_binary_blob ~sw ~env =
 let test_get_invalid_paths ~sw ~env =
   let base_url = Config.base_url in
 
+  (* Note: GET / is no longer invalid — it returns 200 with Terms of Service (BUD-09).
+     See test_report.ml for that case. *)
   let invalid_paths = [
-    "/";                     (* Root path *)
     "/upload";               (* Upload endpoint *)
     "/../etc/passwd";        (* Path traversal attempt *)
     "/a/b/c";                (* Multiple segments *)
-    "";                      (* Empty path *)
   ] in
 
   List.iter (fun path ->
@@ -638,9 +638,9 @@ let test_head_get_consistent_headers ~sw ~env =
 let test_head_invalid_paths ~sw ~env =
   let base_url = Config.base_url in
 
-  (* Note: /upload is now a valid endpoint (BUD-06), so it's not included here *)
+  (* Note: /upload is now a valid endpoint (BUD-06), so it's not included here.
+     GET / is now Terms of Service (BUD-09); HEAD / would still 404. *)
   let invalid_paths = [
-    "/";
     "/../etc/passwd";
     "/a/b/c";
   ] in
