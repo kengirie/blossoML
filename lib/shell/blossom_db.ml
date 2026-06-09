@@ -48,12 +48,48 @@ module Db = struct
       CREATE INDEX IF NOT EXISTS blob_owners_pubkey ON blob_owners(pubkey)
     |sql}
 
+  let create_blob_reports_table =
+    (unit ->. unit)
+    @@ {sql|
+      CREATE TABLE IF NOT EXISTS blob_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT(64) NOT NULL,
+        sha256 TEXT(64) NOT NULL,
+        reporter_pubkey TEXT(64) NOT NULL,
+        report_type TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        e_tag TEXT,
+        p_tag TEXT,
+        raw_event_json TEXT NOT NULL,
+        event_created_at INTEGER NOT NULL,
+        received_at INTEGER NOT NULL,
+        UNIQUE(event_id, sha256)
+      )
+    |sql}
+
+  let create_blob_reports_sha256_index =
+    (unit ->. unit)
+    @@ {sql|
+      CREATE INDEX IF NOT EXISTS blob_reports_sha256 ON blob_reports(sha256)
+    |sql}
+
   let save_blob =
     (t3 string (option string) (option int64) ->. unit)
     @@ {sql|
       INSERT INTO blobs (sha256, uploaded_at, mime_type, size)
       VALUES ($1, strftime('%s', 'now'), $2, $3)
       ON CONFLICT(sha256) DO UPDATE SET status = 'stored', uploaded_at = strftime('%s', 'now')
+    |sql}
+
+  let insert_report =
+    (t10 string string string string string (option string) (option string) string int64 int64
+     ->. unit)
+    @@ {sql|
+      INSERT INTO blob_reports
+        (event_id, sha256, reporter_pubkey, report_type, content,
+         e_tag, p_tag, raw_event_json, event_created_at, received_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT(event_id, sha256) DO NOTHING
     |sql}
 
   let get_blob =
@@ -140,7 +176,9 @@ let init ~env ~sw ~dir =
           Result.bind (C.exec Db.create_blobs_uploaded_at_index ()) @@ fun () ->
           Result.bind (C.exec Db.create_blob_owners_table ()) @@ fun () ->
           Result.bind (C.exec Db.create_blob_owners_sha256_index ()) @@ fun () ->
-          C.exec Db.create_blob_owners_pubkey_index ()
+          Result.bind (C.exec Db.create_blob_owners_pubkey_index ()) @@ fun () ->
+          Result.bind (C.exec Db.create_blob_reports_table ()) @@ fun () ->
+          C.exec Db.create_blob_reports_sha256_index ()
         ) pool
       in
       match init_result with
@@ -261,6 +299,19 @@ let list_by_pubkey pool ~pubkey ~since ~until ~cursor ~limit =
       Ok descriptors
   | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
 
+let save_report pool ~event_id ~sha256 ~reporter_pubkey ~report_type
+    ~content ~e_tag ~p_tag ~raw_event_json ~event_created_at ~received_at =
+  let result =
+    Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
+      C.exec Db.insert_report
+        (event_id, sha256, reporter_pubkey, report_type, content,
+         e_tag, p_tag, raw_event_json, event_created_at, received_at)
+    ) pool
+  in
+  match result with
+  | Ok () -> Ok ()
+  | Error e -> Error (Domain.Storage_error (Caqti_error.show e))
+
 (** Db_intf.S を満たすモジュール *)
 module Impl : Db_intf.S with type t = t = struct
   type nonrec t = t
@@ -273,4 +324,5 @@ module Impl : Db_intf.S with type t = t = struct
   let count_owners = count_owners
   let list_owners = list_owners
   let list_by_pubkey = list_by_pubkey
+  let save_report = save_report
 end

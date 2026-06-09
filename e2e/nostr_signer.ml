@@ -99,6 +99,29 @@ let create_list_auth ~keypair ~created_at ~expiration =
   | Ok (sig_, _) ->
     { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
 
+(** Create a BUD-09 / NIP-56 report event (kind 1984).
+    [entries] is a list of (sha256, report_type) pairs. *)
+let create_report ~keypair ~created_at ~entries ?(content = "") ?e_tag ?p_tag () =
+  let created_at = Int64.of_float created_at in
+  let x_tags = List.map (fun (sha, rt) -> ["x"; sha; rt]) entries in
+  let extra_tags =
+    (match e_tag with Some v -> [["e"; v]] | None -> [])
+    @ (match p_tag with Some v -> [["p"; v]] | None -> [])
+  in
+  let tags = x_tags @ extra_tags in
+  let kind = 1984 in
+  let id = Nostr_event.compute_id
+    ~pubkey:keypair.pubkey
+    ~created_at
+    ~kind
+    ~tags
+    ~content
+  in
+  match Bip340.sign ~secret_key:keypair.secret_key ~msg:id with
+  | Error _ -> failwith "Failed to sign report event"
+  | Ok (sig_, _) ->
+    { Nostr_event.id; pubkey = keypair.pubkey; created_at; kind; tags; content; sig_ }
+
 (** Convert a Nostr event to JSON string. *)
 let event_to_json event =
   let open Nostr_event in

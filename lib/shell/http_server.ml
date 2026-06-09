@@ -36,6 +36,43 @@ let error_to_response_kind = function
   | Domain.Mirror_invalid_url msg -> Http_response.Error_bad_request msg
   | Domain.Mirror_fetch_error msg -> Http_response.Error_bad_gateway msg
   | Domain.Mirror_ssrf_blocked _msg -> Http_response.Error_bad_request "URL not allowed"
+  | Domain.Report_error msg -> Http_response.Error_bad_request msg
+
+(** BUD-09: GET / で返すサーバー規約（terms of service）テキスト *)
+let terms_of_service =
+  let policy = Policy.default_policy in
+  Printf.sprintf
+{|blossoML - Terms of Service
+===========================
+
+This is a Blossom (BUD-01..) server. By uploading, mirroring, or
+otherwise interacting with this server you agree to the following:
+
+1. Acceptable use
+   - No illegal content (including but not limited to CSAM).
+   - No malware or other harmful software.
+   - No content that violates the rights of others.
+
+2. Limits
+   - Maximum blob size: %d bytes.
+   - The operator may reject uploads based on MIME type or other
+     policy at any time.
+
+3. Reporting (BUD-09)
+   - Send a signed NIP-56 (kind:1984) event to PUT /report.
+   - Each `x` tag MUST contain the sha256 of the reported blob and
+     one of the following report types:
+       nudity / malware / profanity / illegal / spam /
+       impersonation / other.
+
+4. Moderation
+   - Reports are stored for operator review.
+   - The operator may remove or refuse content at their discretion.
+
+5. No warranty
+   - This service is provided as-is, without warranty of any kind.
+|}
+    policy.max_size
 
 let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
@@ -51,6 +88,9 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
       let path_parts = String.split_on_char '/' path |> List.filter (fun s -> s <> "") in
       Eio.traceln "Path parts: [%s]" (String.concat "; " path_parts);
       (match path_parts with
+       | [] ->
+           (* BUD-09: GET / returns server's terms of service *)
+           Http_response.Success_terms_of_service terms_of_service
        | [hash_with_ext] ->
            let hash = try Filename.remove_extension hash_with_ext with _ -> hash_with_ext in
            if not (Integrity.validate_hash hash) then
@@ -199,6 +239,48 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
                   }
               | Error e -> error_to_response_kind e)
        | _ -> Http_response.Error_not_found "Invalid path")
+
+  | `PUT, "/report" ->
+      (* BUD-09: signed NIP-56 (kind 1984) report event in body *)
+      let body_str =
+        match Piaf.Body.to_string request.body with
+        | Ok s -> s
+        | Error _ -> ""
+      in
+      let current_time = Int64.of_float (Eio.Time.now clock) in
+      (match Report.validate ~current_time body_str with
+       | Error e -> error_to_response_kind e
+       | Ok report ->
+           let received_at = current_time in
+           let rec persist = function
+             | [] -> Ok ()
+             | (entry : Report.entry) :: rest ->
+                 let report_type_str = Report.report_type_to_string entry.report_type in
+                 (match Blossom_db.save_report db
+                          ~event_id:report.event_id
+                          ~sha256:entry.sha256
+                          ~reporter_pubkey:report.reporter_pubkey
+                          ~report_type:report_type_str
+                          ~content:report.content
+                          ~e_tag:report.e_tag
+                          ~p_tag:report.p_tag
+                          ~raw_event_json:report.raw_event_json
+                          ~event_created_at:report.created_at
+                          ~received_at with
+                  | Error e -> Error e
+                  | Ok () -> persist rest)
+           in
+           (match persist report.entries with
+            | Error e ->
+                Eio.traceln "Failed to persist report %s: %s"
+                  report.event_id
+                  (match e with Domain.Storage_error m -> m | _ -> "unknown");
+                error_to_response_kind e
+            | Ok () ->
+                Eio.traceln "Report received: event=%s reporter=%s entries=%d"
+                  report.event_id report.reporter_pubkey
+                  (List.length report.entries);
+                Http_response.Success_report))
 
   | `PUT, "/upload" ->
       (match Headers.get request.headers "authorization" with
