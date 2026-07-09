@@ -40,6 +40,11 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.ORACLE_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Remove stale upload artifact
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.ORACLE_USER }}@${{ secrets.ORACLE_HOST }} \
+            'rm -f /home/ubuntu/blossoML/main.exe.new'
+
       - name: Upload binary to server
         run: |
           scp -i ~/.ssh/deploy_key \
