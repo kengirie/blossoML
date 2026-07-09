@@ -52,7 +52,7 @@ jobs:
             set -euo pipefail
             cd /home/ubuntu/blossoML
             chmod +x main.exe.new
-            [ -f main.exe ] && cp main.exe main.exe.backup
+            [ -f main.exe ] && cp -f main.exe main.exe.backup
             mv main.exe.new main.exe
             sudo systemctl restart blossoml
             sleep 2
