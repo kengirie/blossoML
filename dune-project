@@ -33,9 +33,7 @@
   conan-database
   yojson
   base64
-  ctypes
-  ctypes-foreign
-  secp256k1-internal
+  secp256k1
   caqti
   caqti-driver-sqlite3
   caqti-eio)

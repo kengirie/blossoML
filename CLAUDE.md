@@ -14,9 +14,9 @@ dune build                     # Build the project
 dune exec blossoML -- --port 8082  # Run the server
 ```
 
-Run unit tests (requires libsecp256k1):
+Run unit tests:
 ```bash
-export DYLD_INSERT_LIBRARIES=/opt/homebrew/opt/secp256k1/lib/libsecp256k1.dylib && eval $(opam env) && dune runtest
+eval $(opam env) && dune runtest
 ```
 
 To run E2E tests (requires running server on localhost:8082):
@@ -29,7 +29,7 @@ dune exec e2e/main.exe
 The codebase follows a core/shell architecture pattern:
 
 **lib/core/** - Pure domain logic, no I/O side effects:
-- `bip340.ml` - BIP-340 Schnorr signature verification using libsecp256k1
+- `bip340.ml` - BIP-340 Schnorr signature verification using the `secp256k1` library (dakk/secp256k1-ml)
 - `nostr_event.ml` - Nostr event parsing and validation
 - `auth.ml` - Authentication logic for Blossom protocol
 - `policy.ml` - Access control policies (allowed pubkeys, size limits)
