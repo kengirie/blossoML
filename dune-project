@@ -34,9 +34,18 @@
   yojson
   base64
   secp256k1
-  caqti
-  caqti-driver-sqlite3
-  caqti-eio)
+  (caqti
+   (and
+    (>= "2.0.0")
+    (< "3.0.0")))
+  (caqti-driver-sqlite3
+   (and
+    (>= "2.0.0")
+    (< "3.0.0")))
+  (caqti-eio
+   (and
+    (>= "2.0.0")
+    (< "3.0.0"))))
  (tags
   ("add topics" "to describe" your project)))
 
