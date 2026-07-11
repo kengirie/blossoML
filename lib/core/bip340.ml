@@ -60,22 +60,17 @@ let verify ~pubkey ~msg ~signature : (unit, verify_error) result =
   else if String.length signature <> 128 then
     Error (Invalid_length { field = "signature"; expected = 128; actual = String.length signature })
   else
-    match hex_to_buffer ~field:"msg" msg with
-    | Error e -> Error e
-    | Ok msg_buf ->
-      match hex_to_buffer ~field:"signature" signature with
-      | Error e -> Error e
-      | Ok sig_buf ->
-        match hex_to_buffer ~field:"pubkey" pubkey with
-        | Error e -> Error e
-        | Ok pubkey_buf ->
-          (* Parse pubkey (raises Invalid_argument on malformed key) *)
-          match Secp256k1.XOPubkey.parse_exn ctx pubkey_buf with
-          | exception (Invalid_argument _) -> Error Pubkey_parse_failed
-          | xonly_pubkey ->
-            let signature = Secp256k1.Schnorr.of_bytes sig_buf in
-            if Secp256k1.Schnorr.verify ctx signature msg_buf xonly_pubkey then Ok ()
-            else Error Signature_verification_failed
+    let open Syntax in
+    let* msg_buf = hex_to_buffer ~field:"msg" msg in
+    let* sig_buf = hex_to_buffer ~field:"signature" signature in
+    let* pubkey_buf = hex_to_buffer ~field:"pubkey" pubkey in
+    (* Parse pubkey (raises Invalid_argument on malformed key) *)
+    match Secp256k1.XOPubkey.parse_exn ctx pubkey_buf with
+    | exception (Invalid_argument _) -> Error Pubkey_parse_failed
+    | xonly_pubkey ->
+      let signature = Secp256k1.Schnorr.of_bytes sig_buf in
+      if Secp256k1.Schnorr.verify ctx signature msg_buf xonly_pubkey then Ok ()
+      else Error Signature_verification_failed
 
 type sign_error =
   | Sign_invalid_secret_key_length of { expected : int; actual : int }

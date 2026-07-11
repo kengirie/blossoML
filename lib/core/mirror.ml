@@ -1,5 +1,7 @@
 (** Mirror request parsing and URL validation for BUD-04 *)
 
+open Syntax
+
 (** Parse mirror request JSON body: {"url": "https://..."} *)
 let parse_request json_str =
   try
@@ -299,37 +301,33 @@ let validate_ip_string ip =
     Bracket hosts that fail IP parsing are rejected (e.g. zone identifiers).
     Hostname-based hosts pass here; they are validated after DNS resolution in the shell layer. *)
 let validate_url_ssrf url =
-  match validate_url url with
-  | Error e -> Error e
-  | Ok () ->
-    match extract_host_kind url with
-    | Error e -> Error e
-    | Ok kind ->
-      let host = match kind with Bracketed h -> h | Unbracketed h -> h in
-      let host_lower = String.lowercase_ascii host in
-      (* Block "localhost" hostname explicitly *)
-      if host_lower = "localhost" then
-        Error (Domain.Mirror_ssrf_blocked "localhost is not allowed")
-      else
-        match kind with
-        | Bracketed _ ->
-          (* Bracket host MUST parse as a valid IP.
-             If it doesn't (e.g. zone identifier like fe80::1%25en0),
-             reject it rather than treating as a hostname. *)
-          (match validate_ip_string host with
-           | Ok () -> Ok ()
-           | Error reason ->
-             Error (Domain.Mirror_ssrf_blocked
-               (Printf.sprintf "IP literal [%s] blocked: %s" host reason)))
-        | Unbracketed _ ->
-          (* Check if host is a bare IPv4 literal *)
-          (match parse_ipv4 host with
-           | Some octets ->
-             (match check_ipv4_safety octets with
-              | Ok () -> Ok ()
-              | Error reason ->
-                Error (Domain.Mirror_ssrf_blocked
-                  (Printf.sprintf "IP literal %s blocked: %s" host reason)))
-           | None ->
-             (* Hostname — DNS validation happens in shell layer *)
-             Ok ())
+  let* () = validate_url url in
+  let* kind = extract_host_kind url in
+  let host = match kind with Bracketed h -> h | Unbracketed h -> h in
+  let host_lower = String.lowercase_ascii host in
+  (* Block "localhost" hostname explicitly *)
+  if host_lower = "localhost" then
+    Error (Domain.Mirror_ssrf_blocked "localhost is not allowed")
+  else
+    match kind with
+    | Bracketed _ ->
+      (* Bracket host MUST parse as a valid IP.
+         If it doesn't (e.g. zone identifier like fe80::1%25en0),
+         reject it rather than treating as a hostname. *)
+      (match validate_ip_string host with
+       | Ok () -> Ok ()
+       | Error reason ->
+         Error (Domain.Mirror_ssrf_blocked
+           (Printf.sprintf "IP literal [%s] blocked: %s" host reason)))
+    | Unbracketed _ ->
+      (* Check if host is a bare IPv4 literal *)
+      (match parse_ipv4 host with
+       | Some octets ->
+         (match check_ipv4_safety octets with
+          | Ok () -> Ok ()
+          | Error reason ->
+            Error (Domain.Mirror_ssrf_blocked
+              (Printf.sprintf "IP literal %s blocked: %s" host reason)))
+       | None ->
+         (* Hostname — DNS validation happens in shell layer *)
+         Ok ())

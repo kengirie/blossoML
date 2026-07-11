@@ -3,6 +3,8 @@
     A report is a kind:1984 Nostr event with one or more `x` tags, each
     containing the sha256 of a reported blob and a report type. *)
 
+open Syntax
+
 type report_type =
   | Nudity
   | Malware
@@ -73,26 +75,25 @@ let parse_event_json (body : string) : (Nostr_event.t, Domain.error) result =
 let extract_entries (event : Nostr_event.t) : (entry list, Domain.error) result =
   let rec collect acc = function
     | [] -> Ok (List.rev acc)
-    | tag :: rest ->
-        (match tag with
-         | "x" :: sha :: type_str :: _ ->
-             if not (Integrity.validate_hash sha) then
-               Error (Domain.Report_error ("Invalid sha256 in x tag: " ^ sha))
-             else
-               (match report_type_of_string type_str with
-                | None ->
-                    Error (Domain.Report_error
-                      (Printf.sprintf "Invalid report type '%s' (expected nudity/malware/profanity/illegal/spam/impersonation/other)" type_str))
-                | Some rt ->
-                    collect ({ sha256 = sha; report_type = rt } :: acc) rest)
-         | "x" :: _ ->
-             Error (Domain.Report_error "x tag must contain sha256 and report type")
-         | _ -> collect acc rest)
+    | ("x" :: sha :: type_str :: _) :: rest ->
+        if not (Integrity.validate_hash sha) then
+          Error (Domain.Report_error ("Invalid sha256 in x tag: " ^ sha))
+        else
+          let* rt =
+            report_type_of_string type_str
+            |> Option.to_result ~none:(Domain.Report_error
+                 (Printf.sprintf "Invalid report type '%s' (expected nudity/malware/profanity/illegal/spam/impersonation/other)" type_str))
+          in
+          collect ({ sha256 = sha; report_type = rt } :: acc) rest
+    | ("x" :: _) :: _ ->
+        Error (Domain.Report_error "x tag must contain sha256 and report type")
+    | _ :: rest -> collect acc rest
   in
-  match collect [] event.tags with
-  | Error e -> Error e
-  | Ok [] -> Error (Domain.Report_error "Report event must contain at least one x tag")
-  | Ok entries -> Ok entries
+  let* entries = collect [] event.tags in
+  if entries = [] then
+    Error (Domain.Report_error "Report event must contain at least one x tag")
+  else
+    Ok entries
 
 (** Validate the Nostr event's id and signature. *)
 let verify_event (event : Nostr_event.t) : (unit, Domain.error) result =
@@ -116,27 +117,22 @@ let verify_event (event : Nostr_event.t) : (unit, Domain.error) result =
     `expiration` tag, as NIP-56 does not mandate one. *)
 let validate ~current_time (body : string) : (t, Domain.error) result =
   let _ = current_time in
-  match parse_event_json body with
-  | Error e -> Error e
-  | Ok event ->
-      if event.kind <> 1984 then
-        Error (Domain.Report_error "Invalid event kind, must be 1984")
-      else
-        match extract_entries event with
-        | Error e -> Error e
-        | Ok entries ->
-            match verify_event event with
-            | Error e -> Error e
-            | Ok () ->
-                let e_tag = Nostr_event.find_tag event "e" in
-                let p_tag = Nostr_event.find_tag event "p" in
-                Ok {
-                  event_id = event.id;
-                  reporter_pubkey = event.pubkey;
-                  created_at = event.created_at;
-                  entries;
-                  content = event.content;
-                  e_tag;
-                  p_tag;
-                  raw_event_json = body;
-                }
+  let* event = parse_event_json body in
+  let* () =
+    if event.kind = 1984 then Ok ()
+    else Error (Domain.Report_error "Invalid event kind, must be 1984")
+  in
+  let* entries = extract_entries event in
+  let* () = verify_event event in
+  let e_tag = Nostr_event.find_tag event "e" in
+  let p_tag = Nostr_event.find_tag event "p" in
+  Ok {
+    event_id = event.id;
+    reporter_pubkey = event.pubkey;
+    created_at = event.created_at;
+    entries;
+    content = event.content;
+    e_tag;
+    p_tag;
+    raw_event_json = body;
+  }

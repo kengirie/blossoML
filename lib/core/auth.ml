@@ -1,5 +1,7 @@
 (** Blossom authentication for kind 24242 events (BUD-01/BUD-02). *)
 
+open Syntax
+
 type action = Upload | Download | Delete | List
 
 let action_to_string = function
@@ -43,27 +45,24 @@ let parse_auth_header header : (Nostr_event.t, Domain.error) result =
 
 (* Validate Blossom-specific event structure *)
 let validate_blossom_event (event : Nostr_event.t) ~action ~current_time =
-  if event.kind <> 24242 then
-    Error (Domain.Auth_error "Invalid event kind, must be 24242")
-  else if event.created_at > current_time then
-    Error (Domain.Auth_error "Event created_at is in the future")
-  else
-    match Nostr_event.find_tag event "expiration" with
-    | None -> Error (Domain.Auth_error "Missing expiration tag")
-    | Some exp_str ->
-        match Int64.of_string_opt exp_str with
-        | None -> Error (Domain.Auth_error "Invalid expiration timestamp")
-        | Some expiration ->
-            if expiration <= current_time then
-              Error (Domain.Auth_error "Event has expired")
-            else
-              match Nostr_event.find_tag event "t" with
-              | None -> Error (Domain.Auth_error "Missing t tag")
-              | Some t_value ->
-                  if t_value <> action_to_string action then
-                    Error (Domain.Auth_error (Printf.sprintf "Invalid action, expected %s" (action_to_string action)))
-                  else
-                    Ok ()
+  let check cond msg = if cond then Ok () else Error (Domain.Auth_error msg) in
+  let* () = check (event.kind = 24242) "Invalid event kind, must be 24242" in
+  let* () = check (event.created_at <= current_time) "Event created_at is in the future" in
+  let* exp_str =
+    Nostr_event.find_tag event "expiration"
+    |> Option.to_result ~none:(Domain.Auth_error "Missing expiration tag")
+  in
+  let* expiration =
+    Int64.of_string_opt exp_str
+    |> Option.to_result ~none:(Domain.Auth_error "Invalid expiration timestamp")
+  in
+  let* () = check (expiration > current_time) "Event has expired" in
+  let* t_value =
+    Nostr_event.find_tag event "t"
+    |> Option.to_result ~none:(Domain.Auth_error "Missing t tag")
+  in
+  check (t_value = action_to_string action)
+    (Printf.sprintf "Invalid action, expected %s" (action_to_string action))
 
 (* Verify event using Nostr_event, returning Domain.error *)
 let verify_event (event : Nostr_event.t) =
@@ -82,29 +81,17 @@ let verify_event (event : Nostr_event.t) =
         Error (Domain.Auth_error "Invalid signature")
 
 let validate_auth ~header ~action ~current_time =
-  match parse_auth_header header with
-  | Error e -> Error e
-  | Ok event ->
-      match validate_blossom_event event ~action ~current_time with
-      | Error e -> Error e
-      | Ok () ->
-          match verify_event event with
-          | Error e -> Error e
-          | Ok () -> Ok event.pubkey
+  let* event = parse_auth_header header in
+  let* () = validate_blossom_event event ~action ~current_time in
+  let* () = verify_event event in
+  Ok event.pubkey
 
 let validate_auth_with_x_tag ~header ~sha256 ~action ~current_time =
-  match parse_auth_header header with
-  | Error e -> Error e
-  | Ok event ->
-      match validate_blossom_event event ~action ~current_time with
-      | Error e -> Error e
-      | Ok () ->
-          match validate_x_tag event ~sha256 with
-          | Error e -> Error e
-          | Ok () ->
-              match verify_event event with
-              | Error e -> Error e
-              | Ok () -> Ok event.pubkey
+  let* event = parse_auth_header header in
+  let* () = validate_blossom_event event ~action ~current_time in
+  let* () = validate_x_tag event ~sha256 in
+  let* () = verify_event event in
+  Ok event.pubkey
 
 let validate_delete_auth ~header ~sha256 ~current_time =
   validate_auth_with_x_tag ~header ~sha256 ~action:Delete ~current_time
