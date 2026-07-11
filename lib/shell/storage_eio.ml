@@ -182,6 +182,42 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
     | exn ->
         Error (Domain.Storage_error (Printexc.to_string exn))
 
+  let get_range ~sw dir ~path ~offset ~length =
+    let chunk_size = 16384 in (* 16KB chunks *)
+    let full_path = Eio.Path.(dir / path) in
+    (* ファイルを開く（エラーを早期に検出） *)
+    try
+      let file = Eio.Path.open_in ~sw full_path in
+      let stream, push = Piaf.Stream.create 2 in
+      (* 別ファイバーでoffsetからpreadしながらストリームにプッシュ
+         （offsetより前のバイトはディスクから読まない） *)
+      Eio.Fiber.fork ~sw (fun () ->
+        Fun.protect ~finally:(fun () -> Eio.Flow.close file) (fun () ->
+          let rec read_loop pos remaining =
+            if remaining <= 0 then
+              push None (* ストリーム終了 *)
+            else
+              let to_read = min chunk_size remaining in
+              let buf = Cstruct.create to_read in
+              match Eio.File.pread file ~file_offset:(Optint.Int63.of_int pos) [buf] with
+              | 0 -> push None
+              | n ->
+                  push (Some (Cstruct.to_string ~len:n buf));
+                  read_loop (pos + n) (remaining - n)
+              | exception End_of_file -> push None
+          in
+          read_loop offset length
+        )
+      );
+      Ok (Piaf.Body.of_string_stream ~length:(`Fixed (Int64.of_int length)) stream)
+    with
+    | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
+        Error (Domain.Blob_not_found path)
+    | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) ->
+        Error (Domain.Storage_error "Permission denied")
+    | exn ->
+        Error (Domain.Storage_error (Printexc.to_string exn))
+
   let exists dir ~path =
     let full_path = Eio.Path.(dir / path) in
     try

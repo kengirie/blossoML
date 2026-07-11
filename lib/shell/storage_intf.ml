@@ -30,6 +30,17 @@ module type S = sig
     size:int ->
     (Piaf.Body.t, Domain.error) result
 
+  (** ストリーミングでファイルの一部を取得する（BUD-01 Rangeリクエスト用）
+      offset: 読み込み開始位置（バイト）
+      length: 読み込むバイト数 *)
+  val get_range :
+    sw:Eio.Switch.t ->
+    t ->
+    path:string ->
+    offset:int ->
+    length:int ->
+    (Piaf.Body.t, Domain.error) result
+
   (** ファイルが存在するか確認する
       - Ok true: 存在する
       - Ok false: Not_found

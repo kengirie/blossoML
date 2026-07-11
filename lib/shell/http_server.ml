@@ -96,14 +96,42 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
            if not (Integrity.validate_hash hash) then
              Http_response.Error_not_found "Invalid path or hash"
            else
-             (match BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash with
-              | Ok (body, metadata) ->
-                  Http_response.Success_blob_stream {
-                    body;
-                    mime_type = metadata.mime_type;
-                    size = metadata.size;
-                  }
-              | Error e -> error_to_response_kind e)
+             (* Blob全体をストリーミングで返すヘルパー *)
+             let serve_full () =
+               match BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash with
+               | Ok (body, metadata) ->
+                   Http_response.Success_blob_stream {
+                     body;
+                     mime_type = metadata.mime_type;
+                     size = metadata.size;
+                   }
+               | Error e -> error_to_response_kind e
+             in
+             (match Headers.get request.headers "range" with
+              | None -> serve_full ()
+              | Some range_header ->
+                  (* BUD-01: Rangeリクエスト対応 *)
+                  (match BlobService.get_metadata ~storage:data_dir ~db ~sha256:hash with
+                   | Error e -> error_to_response_kind e
+                   | Ok metadata ->
+                       match Range.parse range_header ~total_size:metadata.size with
+                       | Range.Not_applicable ->
+                           (* bytes以外の単位や複数rangeはヘッダーを無視して全体を返す *)
+                           serve_full ()
+                       | Range.Unsatisfiable ->
+                           Http_response.Error_range_not_satisfiable { total = metadata.size }
+                       | Range.Satisfiable range ->
+                           (match BlobService.get_range ~sw ~storage:data_dir ~db ~sha256:hash
+                                    ~offset:range.start ~length:(Range.length range) with
+                            | Ok body ->
+                                Http_response.Success_blob_range {
+                                  body;
+                                  mime_type = metadata.mime_type;
+                                  start = range.start;
+                                  end_ = range.end_;
+                                  total = metadata.size;
+                                }
+                            | Error e -> error_to_response_kind e)))
        | ["list"; pubkey] ->
            (* BUD-12: GET /list/<pubkey> *)
            if not (Integrity.validate_hash pubkey) then

@@ -13,6 +13,8 @@ type response_kind =
     (** Blobデータの取得成功（メモリ上のデータ） *)
   | Success_blob_stream of { body: Body.t; mime_type: string; size: int }
     (** Blobデータの取得成功（ストリーミング） *)
+  | Success_blob_range of { body: Body.t; mime_type: string; start: int; end_: int; total: int }
+    (** BUD-01: Rangeリクエスト成功（206 Partial Content、start/end_は両端を含む） *)
   | Success_metadata of { mime_type: string; size: int }
     (** Blobメタデータの取得成功（HEADリクエスト用） *)
   | Success_upload of Domain.blob_descriptor
@@ -43,6 +45,8 @@ type response_kind =
     (** 413 Payload Too Large *)
   | Error_unsupported_media_type of string
     (** 415 Unsupported Media Type *)
+  | Error_range_not_satisfiable of { total: int }
+    (** BUD-01: 416 Range Not Satisfiable（Content-Range: bytes */<total> を付与） *)
   | Error_internal of string
     (** 500 Internal Server Error *)
   | Error_bad_gateway of string
@@ -90,6 +94,7 @@ let create = function
       let headers = Headers.of_list (cors_headers @ [
         ("content-type", mime_type);
         ("content-length", string_of_int size);
+        ("accept-ranges", "bytes");
       ]) in
       Response.create ~headers ~body:(Body.of_string data) `OK
 
@@ -97,13 +102,24 @@ let create = function
       let headers = Headers.of_list (cors_headers @ [
         ("content-type", mime_type);
         ("content-length", string_of_int size);
+        ("accept-ranges", "bytes");
       ]) in
       Response.create ~headers ~body `OK
+
+  | Success_blob_range { body; mime_type; start; end_; total } ->
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-type", mime_type);
+        ("content-length", string_of_int (end_ - start + 1));
+        ("content-range", Printf.sprintf "bytes %d-%d/%d" start end_ total);
+        ("accept-ranges", "bytes");
+      ]) in
+      Response.create ~headers ~body `Partial_content
 
   | Success_metadata { mime_type; size } ->
       let headers = Headers.of_list (cors_headers @ [
         ("content-type", mime_type);
         ("content-length", string_of_int size);
+        ("accept-ranges", "bytes");
       ]) in
       Response.create ~headers `OK
 
@@ -179,6 +195,14 @@ let create = function
   | Error_unsupported_media_type message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Unsupported_media_type
+
+  | Error_range_not_satisfiable { total } ->
+      let message = "Range not satisfiable" in
+      let headers = Headers.of_list (cors_headers @ [
+        ("content-range", Printf.sprintf "bytes */%d" total);
+        ("x-reason", message);
+      ]) in
+      Response.create ~headers ~body:(Body.of_string message) `Range_not_satisfiable
 
   | Error_internal message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
