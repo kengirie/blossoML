@@ -26,6 +26,17 @@ module type S = sig
     sha256:string ->
     (Piaf.Body.t * Domain.blob_descriptor, Domain.error) result
 
+  (** Blobの一部を取得する（BUD-01 Rangeリクエスト用）
+      offset/lengthは呼び出し側で検証済みであること（Range.parseを使用） *)
+  val get_range :
+    sw:Eio.Switch.t ->
+    storage:storage ->
+    db:db ->
+    sha256:string ->
+    offset:int ->
+    length:int ->
+    (Piaf.Body.t, Domain.error) result
+
   (** メタデータのみ取得（HEADリクエスト用） *)
   val get_metadata :
     storage:storage ->
@@ -124,6 +135,14 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
                        url = "/";
                      }))
     | Error e -> Error e
+
+  let get_range ~sw ~storage ~db:_ ~sha256 ~offset ~length =
+    (* メタデータ検証（Range境界の検証）は呼び出し側でget_metadata + Range.parseにより実施済み。
+       ここではファイルの存在確認とストリーミング取得のみ行う *)
+    match Storage.exists storage ~path:sha256 with
+    | Error e -> Error e
+    | Ok false -> Error (Domain.Blob_not_found sha256)
+    | Ok true -> Storage.get_range ~sw storage ~path:sha256 ~offset ~length
 
   let get_metadata ~storage ~db ~sha256 =
     match Db.get db ~sha256 with

@@ -12,4 +12,5 @@ let () =
     "Nostr_signer", Test_nostr_signer.tests;
     "Mirror", Test_mirror.tests;
     "Report", Test_report.tests;
+    "Range", Test_range.tests;
   ]

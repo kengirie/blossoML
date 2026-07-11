@@ -41,6 +41,44 @@ let test_success_metadata () =
   check int "Status code" 200 (get_status response);
   check_cors_headers response
 
+(* Success_blob_range レスポンステスト（BUD-01 Range） *)
+let test_success_blob_range () =
+  let response = Http_response.create (Success_blob_range {
+    body = Body.of_string "test data";
+    mime_type = "video/mp4";
+    start = 500;
+    end_ = 999;
+    total = 10000;
+  }) in
+  check int "Status code" 206 (get_status response);
+  check (option string) "Content-Type header" (Some "video/mp4") (get_header response "content-type");
+  check (option string) "Content-Length header" (Some "500") (get_header response "content-length");
+  check (option string) "Content-Range header" (Some "bytes 500-999/10000") (get_header response "content-range");
+  check (option string) "Accept-Ranges header" (Some "bytes") (get_header response "accept-ranges");
+  check_cors_headers response
+
+(* Error_range_not_satisfiable レスポンステスト（BUD-01 Range） *)
+let test_error_range_not_satisfiable () =
+  let response = Http_response.create (Error_range_not_satisfiable { total = 10000 }) in
+  check int "Status code" 416 (get_status response);
+  check (option string) "Content-Range header" (Some "bytes */10000") (get_header response "content-range");
+  check (option string) "X-Reason header" (Some "Range not satisfiable") (get_header response "x-reason");
+  check_cors_headers response
+
+(* Accept-Ranges ヘッダーの検証（BUD-01: HEADでサポートを宣言） *)
+let test_accept_ranges_headers () =
+  let stream_response = Http_response.create (Success_blob_stream {
+    body = Body.of_string "test";
+    mime_type = "text/plain";
+    size = 4;
+  }) in
+  check (option string) "Accept-Ranges on blob stream" (Some "bytes") (get_header stream_response "accept-ranges");
+  let metadata_response = Http_response.create (Success_metadata {
+    mime_type = "text/plain";
+    size = 4;
+  }) in
+  check (option string) "Accept-Ranges on metadata" (Some "bytes") (get_header metadata_response "accept-ranges")
+
 (* Success_upload レスポンステスト *)
 let test_success_upload () =
   let descriptor = {
@@ -223,6 +261,9 @@ let test_error_to_response_kind_payload_too_large () =
 let tests = [
   test_case "Success_blob response" `Quick test_success_blob;
   test_case "Success_metadata response" `Quick test_success_metadata;
+  test_case "Success_blob_range response" `Quick test_success_blob_range;
+  test_case "Error_range_not_satisfiable response" `Quick test_error_range_not_satisfiable;
+  test_case "Accept-Ranges headers" `Quick test_accept_ranges_headers;
   test_case "Success_upload response" `Quick test_success_upload;
   test_case "Success_list empty response" `Quick test_success_list_empty;
   test_case "Success_list populated response" `Quick test_success_list_populated;
