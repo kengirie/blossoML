@@ -13,7 +13,7 @@ blossoML is yet another [Blossom](https://github.com/hzrd149/blossom) server imp
 - [x] `GET /list/<pubkey>` - List blobs ([BUD-12](https://github.com/hzrd149/blossom/blob/master/buds/12.md)) _(unrecommended)_
 - [ ] `HEAD /media` - Media optimization info ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
 - [ ] `PUT /media` - Media optimization ([BUD-05](https://github.com/hzrd149/blossom/blob/master/buds/05.md))
-- [ ] `PUT /report` - Blob report ([BUD-09](https://github.com/hzrd149/blossom/blob/master/buds/09.md))
+- [x] `PUT /report` - Blob report ([BUD-09](https://github.com/hzrd149/blossom/blob/master/buds/09.md))
 
 ### Other BUDs
 
@@ -31,6 +31,7 @@ The OCaml libraries that blossoML depends on:
 - Concurrent I/O: [Eio](https://github.com/ocaml-multicore/eio)
 - Database: SQLite via [Caqti](https://github.com/paurkedal/ocaml-caqti)
 - Hashing: [Digestif](https://github.com/mirage/digestif) for SHA256
+- BIP-340 Schnorr signature verification: [secp256k1](https://github.com/dakk/secp256k1-ml)
 - MIME detection: [Conan](https://github.com/mirage/conan)
 
 ## Quick Start
