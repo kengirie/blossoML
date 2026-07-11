@@ -35,17 +35,11 @@
   base64
   secp256k1
   (caqti
-   (and
-    (>= "2.0.0")
-    (< "3.0.0")))
+   (>= "3.0.0"))
   (caqti-driver-sqlite3
-   (and
-    (>= "2.0.0")
-    (< "3.0.0")))
+   (>= "3.0.0"))
   (caqti-eio
-   (and
-    (>= "2.0.0")
-    (< "3.0.0"))))
+   (>= "3.0.0")))
  (tags
   ("add topics" "to describe" your project)))
 
