@@ -655,6 +655,141 @@ let test_head_invalid_paths ~sw ~env =
         failwith (Printf.sprintf "Expected 404 or 405 for path '%s', got %d" path response.status)
   ) invalid_paths
 
+(* ===========================================
+   Range Request Tests (BUD-01)
+   =========================================== *)
+
+(** Helper to find a header value case-insensitively *)
+let find_header name headers =
+  List.find_opt (fun (k, _) -> String.lowercase_ascii k = name) headers
+  |> Option.map snd
+
+(** Test: GET with closed range returns 206 and the requested bytes *)
+let test_get_range_closed ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (range closed test)" in
+  let sha256 = upload_file ~sw ~env content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.get ~sw ~env ~url ~headers:[("Range", "bytes=0-4")] () in
+  match result with
+  | Error e -> failwith ("GET failed: " ^ e)
+  | Ok response ->
+    if response.status <> 206 then
+      failwith (Printf.sprintf "Expected 206, got %d" response.status);
+    if response.body <> "01234" then
+      failwith (Printf.sprintf "Expected body '01234', got '%s'" response.body);
+    let total = String.length content in
+    let expected_range = Printf.sprintf "bytes 0-4/%d" total in
+    (match find_header "content-range" response.headers with
+     | Some v when v = expected_range -> ()
+     | Some v -> failwith (Printf.sprintf "Expected Content-Range '%s', got '%s'" expected_range v)
+     | None -> failwith "Missing Content-Range header");
+    (match find_header "content-length" response.headers with
+     | Some "5" -> ()
+     | Some v -> failwith (Printf.sprintf "Expected Content-Length 5, got %s" v)
+     | None -> failwith "Missing Content-Length header")
+
+(** Test: GET with open range (bytes=N-) returns from N to end *)
+let test_get_range_open ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (range open test)" in
+  let sha256 = upload_file ~sw ~env content in
+  let total = String.length content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.get ~sw ~env ~url ~headers:[("Range", "bytes=10-")] () in
+  match result with
+  | Error e -> failwith ("GET failed: " ^ e)
+  | Ok response ->
+    if response.status <> 206 then
+      failwith (Printf.sprintf "Expected 206, got %d" response.status);
+    let expected_body = String.sub content 10 (total - 10) in
+    if response.body <> expected_body then
+      failwith (Printf.sprintf "Expected body '%s', got '%s'" expected_body response.body);
+    let expected_range = Printf.sprintf "bytes 10-%d/%d" (total - 1) total in
+    (match find_header "content-range" response.headers with
+     | Some v when v = expected_range -> ()
+     | Some v -> failwith (Printf.sprintf "Expected Content-Range '%s', got '%s'" expected_range v)
+     | None -> failwith "Missing Content-Range header")
+
+(** Test: GET with suffix range (bytes=-N) returns last N bytes *)
+let test_get_range_suffix ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (range suffix test)" in
+  let sha256 = upload_file ~sw ~env content in
+  let total = String.length content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.get ~sw ~env ~url ~headers:[("Range", "bytes=-5")] () in
+  match result with
+  | Error e -> failwith ("GET failed: " ^ e)
+  | Ok response ->
+    if response.status <> 206 then
+      failwith (Printf.sprintf "Expected 206, got %d" response.status);
+    let expected_body = String.sub content (total - 5) 5 in
+    if response.body <> expected_body then
+      failwith (Printf.sprintf "Expected body '%s', got '%s'" expected_body response.body);
+    let expected_range = Printf.sprintf "bytes %d-%d/%d" (total - 5) (total - 1) total in
+    (match find_header "content-range" response.headers with
+     | Some v when v = expected_range -> ()
+     | Some v -> failwith (Printf.sprintf "Expected Content-Range '%s', got '%s'" expected_range v)
+     | None -> failwith "Missing Content-Range header")
+
+(** Test: GET with out-of-range start returns 416 with Content-Range *)
+let test_get_range_unsatisfiable ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (range unsatisfiable test)" in
+  let sha256 = upload_file ~sw ~env content in
+  let total = String.length content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.get ~sw ~env ~url ~headers:[("Range", "bytes=99999-")] () in
+  match result with
+  | Error e -> failwith ("GET failed: " ^ e)
+  | Ok response ->
+    if response.status <> 416 then
+      failwith (Printf.sprintf "Expected 416, got %d" response.status);
+    let expected_range = Printf.sprintf "bytes */%d" total in
+    (match find_header "content-range" response.headers with
+     | Some v when v = expected_range -> ()
+     | Some v -> failwith (Printf.sprintf "Expected Content-Range '%s', got '%s'" expected_range v)
+     | None -> failwith "Missing Content-Range header")
+
+(** Test: multiple ranges are ignored and the full blob is served with 200 *)
+let test_get_range_multiple_ignored ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (range multiple test)" in
+  let sha256 = upload_file ~sw ~env content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.get ~sw ~env ~url ~headers:[("Range", "bytes=0-1,5-9")] () in
+  match result with
+  | Error e -> failwith ("GET failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Expected 200, got %d" response.status);
+    if response.body <> content then
+      failwith "Expected full blob body for ignored multi-range"
+
+(** Test: HEAD signals range support with Accept-Ranges: bytes *)
+let test_head_accept_ranges ~sw ~env =
+  let base_url = Config.base_url in
+  let content = "0123456789abcdefghij (accept-ranges test)" in
+  let sha256 = upload_file ~sw ~env content in
+
+  let url = base_url ^ "/" ^ sha256 in
+  let result = Http_client.head ~sw ~env ~url () in
+  match result with
+  | Error e -> failwith ("HEAD failed: " ^ e)
+  | Ok response ->
+    if response.status <> 200 then
+      failwith (Printf.sprintf "Expected 200, got %d" response.status);
+    match find_header "accept-ranges" response.headers with
+    | Some "bytes" -> ()
+    | Some v -> failwith (Printf.sprintf "Expected Accept-Ranges 'bytes', got '%s'" v)
+    | None -> failwith "Missing Accept-Ranges header"
+
 (** All tests *)
 let tests = [
   (* GET tests *)
@@ -685,4 +820,11 @@ let tests = [
   ("HEAD multiple times", test_head_multiple_times);
   ("HEAD/GET consistent headers", test_head_get_consistent_headers);
   ("HEAD invalid paths", test_head_invalid_paths);
+  (* Range tests (BUD-01) *)
+  ("GET range closed (bytes=0-4)", test_get_range_closed);
+  ("GET range open (bytes=10-)", test_get_range_open);
+  ("GET range suffix (bytes=-5)", test_get_range_suffix);
+  ("GET range unsatisfiable -> 416", test_get_range_unsatisfiable);
+  ("GET multiple ranges ignored -> 200", test_get_range_multiple_ignored);
+  ("HEAD Accept-Ranges header", test_head_accept_ranges);
 ]
