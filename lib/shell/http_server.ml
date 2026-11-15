@@ -38,6 +38,7 @@ let error_to_response_kind = function
   | Domain.Mirror_fetch_error msg -> Http_response.Error_bad_gateway msg
   | Domain.Mirror_ssrf_blocked _msg -> Http_response.Error_bad_request "URL not allowed"
   | Domain.Report_error msg -> Http_response.Error_bad_request msg
+  | Domain.Service_unavailable msg -> Http_response.Error_service_unavailable msg
 
 (** ハンドラー内部ではErrorも[Http_response.response_kind]で持ち回り、
     最後に[to_response]で畳み込む。Domain.errorは[of_domain]で変換する *)
@@ -106,12 +107,12 @@ otherwise interacting with this server you agree to the following:
     policy.max_size
 
 (** GET /<sha256>: Blob取得（BUD-01、Rangeリクエスト対応） *)
-let handle_get_blob ~sw ~data_dir ~db ~headers hash_with_ext =
+let handle_get_blob ~sw ~watch ~data_dir ~db ~headers hash_with_ext =
   to_response @@
   let* hash = hash_of_path_part hash_with_ext in
   (* Blob全体をストリーミングで返すヘルパー *)
   let serve_full () =
-    let* (body, metadata) = of_domain (BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash) in
+    let* (body, metadata) = of_domain (BlobService.get ~sw ~watch ~storage:data_dir ~db ~sha256:hash) in
     Ok (Http_response.Success_blob_stream {
       body;
       mime_type = metadata.mime_type;
@@ -131,7 +132,7 @@ let handle_get_blob ~sw ~data_dir ~db ~headers hash_with_ext =
           Ok (Http_response.Error_range_not_satisfiable { total = metadata.size })
       | Range.Satisfiable range ->
           let* body =
-            of_domain (BlobService.get_range ~sw ~storage:data_dir ~db ~sha256:hash
+            of_domain (BlobService.get_range ~sw ~watch ~storage:data_dir ~db ~sha256:hash
                          ~offset:range.start ~length:(Range.length range))
           in
           Ok (Http_response.Success_blob_range {
@@ -252,34 +253,12 @@ let handle_head_blob ~data_dir ~db hash_with_ext =
 (** PUT /report: signed NIP-56 (kind 1984) report event in body（BUD-09） *)
 let handle_report ~clock ~db body =
   to_response @@
-  let body_str =
-    match Piaf.Body.to_string body with
-    | Ok s -> s
-    | Error _ -> ""
+  let* body_str =
+    of_domain (Request_body.read_limited ~max_size:Policy.max_report_body_size body)
   in
   let current_time = Int64.of_float (Eio.Time.now clock) in
   let* report = of_domain (Report.validate ~current_time body_str) in
-  let received_at = current_time in
-  let rec persist = function
-    | [] -> Ok ()
-    | (entry : Report.entry) :: rest ->
-        let report_type_str = Report.report_type_to_string entry.report_type in
-        let* () =
-          Blossom_db.save_report db
-            ~event_id:report.event_id
-            ~sha256:entry.sha256
-            ~reporter_pubkey:report.reporter_pubkey
-            ~report_type:report_type_str
-            ~content:report.content
-            ~e_tag:report.e_tag
-            ~p_tag:report.p_tag
-            ~raw_event_json:report.raw_event_json
-            ~event_created_at:report.created_at
-            ~received_at
-        in
-        persist rest
-  in
-  match persist report.entries with
+  match Blossom_db.save_report db ~report ~received_at:current_time with
   | Error e ->
       Eio.traceln "Failed to persist report %s: %s"
         report.event_id
@@ -395,11 +374,9 @@ let handle_mirror ~sw ~env ~clock ~data_dir ~db ~base_url ~headers ~body =
   let current_time = Int64.of_float (Eio.Time.now clock) in
   (* まず認証イベントの基本検証（署名、期限、アクションタイプ） *)
   let* pubkey = of_domain (Auth.validate_auth ~header:auth_header ~action:Auth.Upload ~current_time) in
-  (* リクエストボディをJSONとしてパース *)
-  let body_str =
-    match Piaf.Body.to_string body with
-    | Ok s -> s
-    | Error _ -> ""
+  (* リクエストボディをJSONとしてパース（サイズ上限付き） *)
+  let* body_str =
+    of_domain (Request_body.read_limited ~max_size:Policy.max_mirror_body_size body)
   in
   let* mirror_req = of_domain (Mirror.parse_request body_str) in
   let* () = of_domain (Mirror.validate_url mirror_req.url) in
@@ -424,12 +401,25 @@ let handle_mirror ~sw ~env ~clock ~data_dir ~db ~base_url ~headers ~body =
   in
   Ok (Http_response.Success_upload descriptor)
 
-(** ルーティング: メソッドとパスからハンドラーを選択する *)
-let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.request; _ } =
+(** ルーティング: メソッドとパスからハンドラーを選択する
+
+    [sw] はサーバー全体の寿命を持つスイッチ、[ctx.sw] は接続ごとのスイッチ。
+    blob のストリーミング配信は接続ごとのスイッチに紐付け、クライアントが
+    応答を受け取らなくなった場合にその接続だけを打ち切れるようにする
+    （[Stall_guard] を参照） *)
+let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
+    { Server.Handler.request; ctx = { Request_info.sw = conn_sw; client_address; _ } } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
+  let mono_clock = (Eio.Stdenv.mono_clock env :> Stall_guard.mono_clock) in
+  (* 接続ごとの状態（配信の停止監視・同時配信数・処理中のリクエスト） *)
+  let guard =
+    Stall_guard.for_connection ~sw:conn_sw ~clock:mono_clock ~client_address
+      ~multiplexed:(request.version = Versions.HTTP.HTTP_2)
+  in
   let headers = request.headers in
 
-  let response_kind = match request.meth, request.target with
+  let response_kind = Stall_guard.with_request guard @@ fun () ->
+    match request.meth, request.target with
   | `OPTIONS, _ ->
       Http_response.Cors_preflight
 
@@ -441,7 +431,10 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
        | [] ->
            (* BUD-09: GET / returns server's terms of service *)
            Http_response.Success_terms_of_service terms_of_service
-       | [hash_with_ext] -> handle_get_blob ~sw ~data_dir ~db ~headers hash_with_ext
+       | [hash_with_ext] ->
+           (* 配信の停止監視（[Stall_guard] を参照） *)
+           let watch = Stall_guard.watch_response guard ~label:hash_with_ext in
+           handle_get_blob ~sw:conn_sw ~watch ~data_dir ~db ~headers hash_with_ext
        | ["list"; pubkey] -> handle_list ~clock ~data_dir ~db ~base_url ~headers ~uri pubkey
        | _ -> Http_response.Error_not_found "Invalid path")
 
@@ -468,9 +461,28 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url { Server.Handler.req
 
   (* レスポンスを生成（CORSヘッダーは自動的に付与される） *)
   let response = Http_response.create response_kind in
+  (* リクエストボディを読み切らずに応答する場合（認証失敗・サイズ超過など）は
+     HTTP/1.x の接続を閉じる。キープアライブのままだと、httpun が次の
+     リクエストを探すために未読のボディを受信し続け、それを内部バッファに
+     溜め込むため、巨大なボディでメモリを枯渇させられる。
+     （HTTP/2 では Connection ヘッダーが禁止されており、フロー制御があるため不要） *)
+  let response =
+    if Body.is_closed request.body || request.version = Versions.HTTP.HTTP_2 then
+      response
+    else
+      Response.create
+        ~version:(Response.version response)
+        ~headers:(Headers.add (Response.headers response) "connection" "close")
+        ~body:(Response.body response)
+        (Response.status response)
+  in
   log_response ~request response;
   response
 
+(** サーバーが実行中に落ちた場合に再起動するまでの待ち時間（秒） *)
+let restart_delay = 1.0
+
+(** サーバーを起動し、停止（キャンセル）されるまでブロックする *)
 let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
   let ip_addr = match host with
     | "localhost" | "127.0.0.1" -> Eio.Net.Ipaddr.V4.loopback
@@ -499,5 +511,25 @@ let start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url ?cert ?key () =
   in
 
   let server = Server.create ~config (request_handler ~sw ~env ~clock ~data_dir ~db ~base_url) in
-  let _ = Server.Command.start ~sw env server in
-  ()
+  (* Piaf の受付ループは accept の失敗（ファイル記述子の枯渇 EMFILE など）を
+     処理せず例外を投げ、そのままではプロセス全体が終了する。
+     サーバーを専用のスイッチで動かし、起動後に落ちた場合はそのスイッチごと
+     （全接続とそれに紐づくファイル・ファイバーを）片付けてから再起動する。
+     起動時の失敗（ポート使用中など）は再試行せずそのまま例外を投げる *)
+  let rec serve () =
+    let started = ref false in
+    match
+      Eio.Switch.run (fun server_sw ->
+        let _ = Server.Command.start ~sw:server_sw env server in
+        started := true;
+        Eio.Fiber.await_cancel ())
+    with
+    | () -> ()
+    | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
+    | exception exn when !started ->
+        Eio.traceln "Server loop failed: %s; restarting in %.0fs"
+          (Printexc.to_string exn) restart_delay;
+        Eio.Time.sleep clock restart_delay;
+        serve ()
+  in
+  serve ()

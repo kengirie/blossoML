@@ -206,6 +206,31 @@ let test_validate_malformed_json () =
   | Error (Domain.Report_error _) -> ()
   | Error _ -> fail "expected Report_error"
 
+(* ---- x tag count limit ---- *)
+let make_entries n =
+  List.init n (fun i ->
+    ["x"; Digestif.SHA256.(to_hex (digest_string (string_of_int i))); "spam"])
+
+let test_validate_max_entries_accepted () =
+  let secret_key, pubkey = fresh_keypair () in
+  let created_at = Int64.sub (current ()) 10L in
+  let body = make_report_json ~secret_key ~pubkey ~created_at
+    ~tags:(make_entries Policy.max_report_entries) ~content:"" in
+  match Report.validate ~current_time:(current ()) body with
+  | Ok r ->
+      check int "all entries kept" Policy.max_report_entries (List.length r.entries)
+  | Error _ -> fail "expected success at the limit"
+
+let test_validate_too_many_entries () =
+  let secret_key, pubkey = fresh_keypair () in
+  let created_at = Int64.sub (current ()) 10L in
+  let body = make_report_json ~secret_key ~pubkey ~created_at
+    ~tags:(make_entries (Policy.max_report_entries + 1)) ~content:"" in
+  match Report.validate ~current_time:(current ()) body with
+  | Ok _ -> fail "expected failure"
+  | Error (Domain.Report_error _) -> ()
+  | Error _ -> fail "expected Report_error"
+
 let tests = [
   test_case "report_type roundtrip" `Quick test_report_type_roundtrip;
   test_case "report_type unknown" `Quick test_report_type_unknown;
@@ -218,4 +243,6 @@ let tests = [
   test_case "validate rejects x tag without type" `Quick test_validate_x_tag_missing_type;
   test_case "validate rejects tampered signature" `Quick test_validate_tampered_signature;
   test_case "validate rejects malformed JSON" `Quick test_validate_malformed_json;
+  test_case "validate accepts max x tags" `Quick test_validate_max_entries_accepted;
+  test_case "validate rejects too many x tags" `Quick test_validate_too_many_entries;
 ]

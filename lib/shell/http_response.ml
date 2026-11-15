@@ -51,6 +51,8 @@ type response_kind =
     (** 500 Internal Server Error *)
   | Error_bad_gateway of string
     (** 502 Bad Gateway *)
+  | Error_service_unavailable of string
+    (** 503 Service Unavailable（一時的な容量制限） *)
 
 (** CORSヘッダーのリスト
 
@@ -211,3 +213,7 @@ let create = function
   | Error_bad_gateway message ->
       let headers = Headers.of_list (cors_headers @ [("x-reason", message)]) in
       Response.create ~headers ~body:(Body.of_string message) `Bad_gateway
+
+  | Error_service_unavailable message ->
+      let headers = Headers.of_list (cors_headers @ [("x-reason", message); ("retry-after", "10")]) in
+      Response.create ~headers ~body:(Body.of_string message) `Service_unavailable

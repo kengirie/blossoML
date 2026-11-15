@@ -11,6 +11,14 @@ let default_policy = {
   allowed_mime_types = []; (* 全て許可 *)
 }
 
+(* JSONリクエストボディ（PUT /report, PUT /mirror）の上限。
+   どちらも小さなJSONで足りるため、/upload とは別に小さく制限する *)
+let max_report_body_size = 64 * 1024 (* 64KB *)
+let max_mirror_body_size = 16 * 1024 (* 16KB *)
+
+(* 1件のレポートイベントに含められる x タグの上限 *)
+let max_report_entries = 100
+
 let check_size ~policy size =
   if size < 0 then Error (Invalid_size size)
   else if size > policy.max_size then

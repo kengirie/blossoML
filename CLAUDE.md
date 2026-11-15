@@ -41,6 +41,7 @@ The codebase follows a core/shell architecture pattern:
 **lib/shell/** - I/O and infrastructure:
 - `http_server.ml` - Piaf HTTP server with Blossom endpoints
 - `http_response.ml` - HTTP response builders
+- `request_body.ml` - Size-limited request body reading
 - `blob_service.ml` - Blob upload/download orchestration
 - `storage_eio.ml` - Filesystem storage using Eio
 - `blossom_db.ml` - SQLite database via Caqti

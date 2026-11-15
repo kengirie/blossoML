@@ -21,6 +21,7 @@ module type S = sig
   (** Blobを取得する（DB取得 → ストリーミング返却） *)
   val get :
     sw:Eio.Switch.t ->
+    watch:Storage_intf.watch ->
     storage:storage ->
     db:db ->
     sha256:string ->
@@ -30,6 +31,7 @@ module type S = sig
       offset/lengthは呼び出し側で検証済みであること（Range.parseを使用） *)
   val get_range :
     sw:Eio.Switch.t ->
+    watch:Storage_intf.watch ->
     storage:storage ->
     db:db ->
     sha256:string ->
@@ -124,17 +126,17 @@ module Make (Storage : Storage_intf.S) (Db : Db_intf.S) :
         fallback_descriptor storage ~sha256
     | Error e -> Error e
 
-  let get ~sw ~storage ~db ~sha256 =
+  let get ~sw ~watch ~storage ~db ~sha256 =
     (* メタデータ取得（ファイルの存在確認込み） → ストリーミング返却 *)
     let* metadata = get_metadata ~storage ~db ~sha256 in
-    let* body = Storage.get ~sw storage ~path:sha256 ~size:metadata.Domain.size in
+    let* body = Storage.get ~sw ~watch storage ~path:sha256 ~size:metadata.Domain.size in
     Ok (body, metadata)
 
-  let get_range ~sw ~storage ~db:_ ~sha256 ~offset ~length =
+  let get_range ~sw ~watch ~storage ~db:_ ~sha256 ~offset ~length =
     (* メタデータ検証（Range境界の検証）は呼び出し側でget_metadata + Range.parseにより実施済み。
        ここではファイルの存在確認とストリーミング取得のみ行う *)
     let* () = ensure_file_exists storage ~sha256 in
-    Storage.get_range ~sw storage ~path:sha256 ~offset ~length
+    Storage.get_range ~sw ~watch storage ~path:sha256 ~offset ~length
 
   let delete ~storage ~db ~sha256 ~pubkey =
     (* 1. まずBlobが存在するか確認（存在しない場合は404） *)

@@ -123,10 +123,46 @@ let test_put_report_rejects_unknown_type ~sw ~env =
     if response.status <> 400 then
       failwith (Printf.sprintf "Expected 400 for invalid report type, got %d" response.status)
 
+(** Test: PUT /report rejects a body larger than the report body limit (413) *)
+let test_put_report_rejects_oversized_body ~sw ~env =
+  let base_url = Config.base_url in
+  let body = String.make (Blossom_core.Policy.max_report_body_size + 1) ' ' in
+  let result = Http_client.put ~sw ~env ~url:(base_url ^ "/report")
+    ~headers:[("Content-Type", "application/json")] ~body ()
+  in
+  match result with
+  | Error e -> failwith ("Request failed: " ^ e)
+  | Ok response ->
+    if response.status <> 413 then
+      failwith (Printf.sprintf "Expected 413 for oversized body, got %d" response.status)
+
+(** Test: PUT /report rejects an event with more x tags than allowed (400) *)
+let test_put_report_rejects_too_many_x_tags ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+  let keypair = Nostr_signer.generate_keypair () in
+  let entries =
+    List.init (Blossom_core.Policy.max_report_entries + 1)
+      (fun i -> (sha256_hex (string_of_int i), "spam"))
+  in
+  let event = Nostr_signer.create_report ~keypair ~created_at:now ~entries () in
+  let body = Nostr_signer.event_to_json event in
+  let result = Http_client.put ~sw ~env ~url:(base_url ^ "/report")
+    ~headers:[("Content-Type", "application/json")] ~body ()
+  in
+  match result with
+  | Error e -> failwith ("Request failed: " ^ e)
+  | Ok response ->
+    if response.status <> 400 then
+      failwith (Printf.sprintf "Expected 400 for too many x tags, got %d" response.status)
+
 let tests = [
   ("GET / returns ToS", test_get_root_terms_of_service);
   ("PUT /report accepted", test_put_report_accepted);
   ("PUT /report multiple x tags", test_put_report_multiple_x_tags);
   ("PUT /report rejects invalid body", test_put_report_rejects_invalid_body);
   ("PUT /report rejects unknown type", test_put_report_rejects_unknown_type);
+  ("PUT /report rejects oversized body", test_put_report_rejects_oversized_body);
+  ("PUT /report rejects too many x tags", test_put_report_rejects_too_many_x_tags);
 ]
