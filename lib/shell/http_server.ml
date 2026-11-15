@@ -38,6 +38,7 @@ let error_to_response_kind = function
   | Domain.Mirror_fetch_error msg -> Http_response.Error_bad_gateway msg
   | Domain.Mirror_ssrf_blocked _msg -> Http_response.Error_bad_request "URL not allowed"
   | Domain.Report_error msg -> Http_response.Error_bad_request msg
+  | Domain.Service_unavailable msg -> Http_response.Error_service_unavailable msg
 
 (** ハンドラー内部ではErrorも[Http_response.response_kind]で持ち回り、
     最後に[to_response]で畳み込む。Domain.errorは[of_domain]で変換する *)
@@ -410,9 +411,15 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
     { Server.Handler.request; ctx = { Request_info.sw = conn_sw; client_address; _ } } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
   let mono_clock = (Eio.Stdenv.mono_clock env :> Stall_guard.mono_clock) in
+  (* 接続ごとの状態（配信の停止監視・同時配信数・処理中のリクエスト） *)
+  let guard =
+    Stall_guard.for_connection ~sw:conn_sw ~clock:mono_clock ~client_address
+      ~multiplexed:(request.version = Versions.HTTP.HTTP_2)
+  in
   let headers = request.headers in
 
-  let response_kind = match request.meth, request.target with
+  let response_kind = Stall_guard.with_request guard @@ fun () ->
+    match request.meth, request.target with
   | `OPTIONS, _ ->
       Http_response.Cors_preflight
 
@@ -426,13 +433,7 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
            Http_response.Success_terms_of_service terms_of_service
        | [hash_with_ext] ->
            (* 配信の停止監視（[Stall_guard] を参照） *)
-           let watch =
-             let conn =
-               Stall_guard.for_connection ~sw:conn_sw ~clock:mono_clock ~client_address
-                 ~multiplexed:(request.version = Versions.HTTP.HTTP_2)
-             in
-             Stall_guard.watch_response conn ~label:hash_with_ext
-           in
+           let watch = Stall_guard.watch_response guard ~label:hash_with_ext in
            handle_get_blob ~sw:conn_sw ~watch ~data_dir ~db ~headers hash_with_ext
        | ["list"; pubkey] -> handle_list ~clock ~data_dir ~db ~base_url ~headers ~uri pubkey
        | _ -> Http_response.Error_not_found "Invalid path")

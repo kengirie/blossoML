@@ -18,8 +18,9 @@ let with_conn ~multiplexed f =
 
 let register conn label =
   let stalled = ref false in
-  let progress = G.watch_response conn ~label ~on_stall:(fun () -> stalled := true) in
-  progress, stalled
+  match G.watch_response conn ~label ~on_stall:(fun () -> stalled := true) with
+  | Ok progress -> progress, stalled
+  | Error e -> failf "registration rejected: %s" e
 
 let sleep clock s = Eio.Time.Mono.sleep clock s
 
@@ -110,6 +111,78 @@ let test_truncated_h2_kept () =
     sleep clock 1.) in
   check outcome "connection kept" (`Ok ()) r
 
+let test_h2_paused_with_other_requests_kept () =
+  let released = ref false in
+  let r = with_conn ~multiplexed:true (fun ~clock conn ->
+    let p, sa = register conn "paused" in
+    (* 同じ接続で短いリクエストが2秒ごとに来る（配信の監視には現れない） *)
+    let t = ref 0.0 in
+    while !t < G.stall_timeout *. 2.5 do
+      G.with_request conn (fun () -> ());
+      sleep clock 2.; t := !t +. 2.
+    done;
+    released := !sa;
+    p.finished ()) in
+  check outcome "connection kept" (`Ok ()) r;
+  check bool "paused stream's file released" true !released
+
+let test_h2_paused_with_long_request_kept () =
+  let r = with_conn ~multiplexed:true (fun ~clock conn ->
+    let p, _ = register conn "paused" in
+    (* 長いアップロードなど、処理中のリクエストがある *)
+    G.with_request conn (fun () -> sleep clock (G.stall_timeout *. 2.5));
+    p.finished ()) in
+  check outcome "connection kept" (`Ok ()) r
+
+let test_per_connection_limit () =
+  let r = with_conn ~multiplexed:true (fun ~clock:_ conn ->
+    let ps = List.init G.max_active_per_connection (fun i -> fst (register conn (string_of_int i))) in
+    (match G.watch_response conn ~label:"over" ~on_stall:ignore with
+     | Ok _ -> fail "expected rejection over the per-connection limit"
+     | Error _ -> ());
+    (* 1件終われば受け付ける *)
+    (List.hd ps).finished ();
+    (match G.watch_response conn ~label:"again" ~on_stall:ignore with
+     | Ok p -> p.finished ()
+     | Error e -> failf "expected acceptance after a slot freed: %s" e);
+    List.iter (fun (p : Blossom_shell.Storage_intf.progress) -> p.finished ()) ps) in
+  check outcome "ok" (`Ok ()) r;
+  check int "open file count restored" 0 !G.open_files
+
+let test_global_open_files_limit () =
+  let r = Eio_mock.Backend.run_full (fun env ->
+    let clock = (Eio.Stdenv.mono_clock env :> G.mono_clock) in
+    Eio.Switch.run (fun sw ->
+      let conn i =
+        G.for_connection ~sw ~clock ~multiplexed:true
+          ~client_address:(`Tcp (Eio.Net.Ipaddr.V4.loopback, 41000 + i)) in
+      let n_conns = G.max_open_files / G.max_active_per_connection in
+      for i = 0 to n_conns - 1 do
+        let c = conn i in
+        for j = 1 to G.max_active_per_connection do ignore (register c (string_of_int j)) done
+      done;
+      check int "open files at the limit" G.max_open_files !G.open_files;
+      match G.watch_response (conn n_conns) ~label:"over" ~on_stall:ignore with
+      | Ok _ -> `Accepted
+      | Error _ -> `Rejected)) in
+  check bool "rejected at the global limit" true (r = `Rejected);
+  check int "open file count restored after connections end" 0 !G.open_files
+
+let test_resume_after_stall () =
+  let r = with_conn ~multiplexed:true (fun ~clock conn ->
+    let pa, sa = register conn "paused" in
+    let pb, _ = register conn "active" in
+    keep_taking clock pb ~every:10. ~total:(G.stall_timeout +. 20.);
+    check bool "paused stalled and released" true !sa;
+    check int "only the active stream holds a file" 1 !G.open_files;
+    check bool "resume allowed" true (pa.resume ());
+    check int "resumed stream holds a file again" 2 !G.open_files;
+    pa.taken ();
+    keep_taking clock pb ~every:10. ~total:(G.stall_timeout /. 2.);
+    pa.finished (); pb.finished ()) in
+  check outcome "connection kept" (`Ok ()) r;
+  check int "open file count restored" 0 !G.open_files
+
 let tests = [
   test_case "HTTP/1: stalled response closes connection" `Quick test_http1_stalled_closes;
   test_case "HTTP/1: steadily progressing response kept" `Quick test_http1_active_kept;
@@ -120,4 +193,9 @@ let tests = [
   test_case "HTTP/2: too many stalled streams -> closed" `Quick test_h2_many_stalled_closes;
   test_case "HTTP/1: truncated response closes connection" `Quick test_truncated_http1_closes;
   test_case "HTTP/2: truncated response keeps connection" `Quick test_truncated_h2_kept;
+  test_case "HTTP/2: paused stream + other short requests -> kept" `Quick test_h2_paused_with_other_requests_kept;
+  test_case "HTTP/2: paused stream + long request in progress -> kept" `Quick test_h2_paused_with_long_request_kept;
+  test_case "per-connection download limit" `Quick test_per_connection_limit;
+  test_case "global open file limit" `Quick test_global_open_files_limit;
+  test_case "resume after stall reacquires the file" `Quick test_resume_after_stall;
 ]

@@ -145,6 +145,14 @@ let test_error_internal () =
   check (option string) "X-Reason header" (Some "Database error") (get_header response "x-reason");
   check_cors_headers response
 
+(* Error_service_unavailable レスポンステスト *)
+let test_error_service_unavailable () =
+  let response = Http_response.create (Error_service_unavailable "Server is busy") in
+  check int "Status code" 503 (get_status response);
+  check (option string) "X-Reason header" (Some "Server is busy") (get_header response "x-reason");
+  check (option string) "Retry-After header" (Some "10") (get_header response "retry-after");
+  check_cors_headers response
+
 (* Success_list レスポンステスト（空配列） *)
 let test_success_list_empty () =
   let response = Http_response.create (Success_list []) in
@@ -248,6 +256,11 @@ let test_error_to_response_kind_storage_error () =
   let response = Http_response.create response_kind in
   check int "Storage_error maps to 500" 500 (get_status response)
 
+let test_error_to_response_kind_service_unavailable () =
+  let response_kind = Http_server.error_to_response_kind (Domain.Service_unavailable "busy") in
+  let response = Http_response.create response_kind in
+  check int "Service_unavailable maps to 503" 503 (get_status response)
+
 let test_error_to_response_kind_blob_not_found () =
   let response_kind = Http_server.error_to_response_kind (Domain.Blob_not_found "abc123") in
   let response = Http_response.create response_kind in
@@ -276,6 +289,7 @@ let tests = [
   test_case "Error_bad_request response" `Quick test_error_bad_request;
   test_case "Error_length_required response" `Quick test_error_length_required;
   test_case "Error_internal response" `Quick test_error_internal;
+  test_case "Error_service_unavailable response" `Quick test_error_service_unavailable;
   test_case "descriptor_to_json function" `Quick test_descriptor_to_json;
   (* error_to_response_kind mapping tests *)
   test_case "Auth_error -> 401" `Quick test_error_to_response_kind_auth_error;
@@ -285,4 +299,5 @@ let tests = [
   test_case "Storage_error -> 500" `Quick test_error_to_response_kind_storage_error;
   test_case "Blob_not_found -> 404" `Quick test_error_to_response_kind_blob_not_found;
   test_case "Payload_too_large -> 413" `Quick test_error_to_response_kind_payload_too_large;
+  test_case "Service_unavailable -> 503" `Quick test_error_to_response_kind_service_unavailable;
 ]

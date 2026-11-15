@@ -151,59 +151,69 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
   let get_range ~sw ~watch dir ~path ~offset ~length =
     let chunk_size = 16384 in (* 16KB chunks *)
     let full_path = Eio.Path.(dir / path) in
-    (* ファイルを開く（エラーを早期に検出） *)
-    try
-      let file = Eio.Path.open_in ~sw full_path in
-      let pos = ref offset and remaining = ref length in
-      let closed = ref false in
-      let close_file () =
-        if not !closed then begin
-          closed := true;
-          (try Eio.Flow.close file with _ -> ())
-        end
-      in
-      (* 停止監視に登録。停止と判断されたらファイルを閉じる（[Stall_guard] を参照） *)
-      let progress : Storage_intf.progress = watch ~on_stall:close_file in
-      let finish ~complete =
-        close_file ();
-        if complete then progress.finished () else progress.truncated ()
-      in
-      (* 送信側が次のチャンクを要求したときにだけ offset から pread する
-         （offset より前のバイトはディスクから読まない） *)
-      let next_chunk () =
-        progress.taken ();
-        if !remaining <= 0 then (finish ~complete:true; None)
-        else if !closed then
-          (* 停止と判断されてファイルを閉じた後に再開された *)
-          (finish ~complete:false; None)
-        else
-          let buf = Cstruct.create (min chunk_size !remaining) in
-          match Eio.File.pread file ~file_offset:(Optint.Int63.of_int !pos) [buf] with
-          | n when n > 0 ->
-              pos := !pos + n;
-              remaining := !remaining - n;
-              Some (Cstruct.to_string ~len:n buf)
-          | _ | exception End_of_file ->
-              Eio.traceln "Unexpected end of file while streaming %s" path;
-              finish ~complete:false;
-              None
-          | exception (Eio.Cancel.Cancelled _ as exn) ->
+    let file = ref None in
+    let open_file () = file := Some (Eio.Path.open_in ~sw full_path) in
+    let close_file () =
+      match !file with
+      | Some f -> file := None; (try Eio.Flow.close f with _ -> ())
+      | None -> ()
+    in
+    let open_error = function
+      | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> Domain.Blob_not_found path
+      | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) -> Domain.Storage_error "Permission denied"
+      | exn -> Domain.Storage_error (Printexc.to_string exn)
+    in
+    (* 停止監視に登録（同時配信数の上限を超える場合はファイルを開かずに拒否）。
+       停止と判断されたらファイルを閉じる（[Stall_guard] を参照） *)
+    match watch ~on_stall:close_file with
+    | Error reason -> Error (Domain.Service_unavailable reason)
+    | Ok (progress : Storage_intf.progress) ->
+        match open_file () with
+        | exception exn ->
+            progress.finished ();
+            Error (open_error exn)
+        | () ->
+            let pos = ref offset and remaining = ref length in
+            let finish ~complete =
               close_file ();
-              raise exn
-          | exception exn ->
-              Eio.traceln "Read error while streaming %s: %s" path (Printexc.to_string exn);
+              if complete then progress.finished () else progress.truncated ()
+            in
+            let ended_early reason =
+              Eio.traceln "Response for %s ended early: %s" path reason;
               finish ~complete:false;
               None
-      in
-      Ok (Piaf.Body.of_string_stream ~length:(`Fixed (Int64.of_int length))
-            (Piaf.Stream.from ~f:next_chunk))
-    with
-    | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
-        Error (Domain.Blob_not_found path)
-    | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) ->
-        Error (Domain.Storage_error "Permission denied")
-    | exn ->
-        Error (Domain.Storage_error (Printexc.to_string exn))
+            in
+            (* 送信側が次のチャンクを要求したときにだけ offset から pread する
+               （offset より前のバイトはディスクから読まない） *)
+            let next_chunk () =
+              progress.taken ();
+              if !remaining <= 0 then (finish ~complete:true; None)
+              else begin
+                (* 停止と判断されてファイルを閉じた後に再開された場合は開き直す *)
+                (match !file with
+                 | Some _ -> ()
+                 | None ->
+                     if progress.resume () then
+                       (try open_file () with exn ->
+                          Eio.traceln "Failed to reopen %s: %s" path (Printexc.to_string exn)));
+                match !file with
+                | None -> ended_early "file could not be reopened after a stall"
+                | Some f ->
+                    let buf = Cstruct.create (min chunk_size !remaining) in
+                    match Eio.File.pread f ~file_offset:(Optint.Int63.of_int !pos) [buf] with
+                    | n when n > 0 ->
+                        pos := !pos + n;
+                        remaining := !remaining - n;
+                        Some (Cstruct.to_string ~len:n buf)
+                    | _ | exception End_of_file -> ended_early "unexpected end of file"
+                    | exception (Eio.Cancel.Cancelled _ as exn) ->
+                        close_file ();
+                        raise exn
+                    | exception exn -> ended_early (Printexc.to_string exn)
+              end
+            in
+            Ok (Piaf.Body.of_string_stream ~length:(`Fixed (Int64.of_int length))
+                  (Piaf.Stream.from ~f:next_chunk))
 
   let get ~sw ~watch dir ~path ~size =
     get_range ~sw ~watch dir ~path ~offset:0 ~length:size

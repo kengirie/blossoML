@@ -20,6 +20,7 @@ type error =
   | Mirror_fetch_error of string    (* remote fetch failed -> 502 *)
   | Mirror_ssrf_blocked of string   (* SSRF protection blocked URL -> 400, detail for logging *)
   | Report_error of string          (* invalid NIP-56 report event -> 400 *)
+  | Service_unavailable of string   (* temporary capacity limit -> 503 *)
 
 (** Mirror request body *)
 type mirror_request = {
