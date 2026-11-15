@@ -23,10 +23,12 @@ module type S = sig
     (save_result, Domain.error) result
 
   (** ストリーミングでファイルを取得する。
-      [sw] には接続ごとのスイッチを渡すこと。クライアントが一定時間応答を
-      受け取らない場合、実装は [sw] を失敗させて接続を打ち切ることがある *)
+      [sw] には接続ごとのスイッチを渡すこと。
+      [abort_on_stall] が true の場合、応答の途中でクライアントが
+      一定時間受け取らなくなると、実装は [sw] を失敗させて接続を打ち切る *)
   val get :
     sw:Eio.Switch.t ->
+    abort_on_stall:bool ->
     t ->
     path:string ->
     size:int ->
@@ -37,6 +39,7 @@ module type S = sig
       length: 読み込むバイト数 *)
   val get_range :
     sw:Eio.Switch.t ->
+    abort_on_stall:bool ->
     t ->
     path:string ->
     offset:int ->

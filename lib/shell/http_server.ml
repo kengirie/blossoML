@@ -106,12 +106,12 @@ otherwise interacting with this server you agree to the following:
     policy.max_size
 
 (** GET /<sha256>: Blob取得（BUD-01、Rangeリクエスト対応） *)
-let handle_get_blob ~sw ~data_dir ~db ~headers hash_with_ext =
+let handle_get_blob ~sw ~abort_on_stall ~data_dir ~db ~headers hash_with_ext =
   to_response @@
   let* hash = hash_of_path_part hash_with_ext in
   (* Blob全体をストリーミングで返すヘルパー *)
   let serve_full () =
-    let* (body, metadata) = of_domain (BlobService.get ~sw ~storage:data_dir ~db ~sha256:hash) in
+    let* (body, metadata) = of_domain (BlobService.get ~sw ~abort_on_stall ~storage:data_dir ~db ~sha256:hash) in
     Ok (Http_response.Success_blob_stream {
       body;
       mime_type = metadata.mime_type;
@@ -131,7 +131,7 @@ let handle_get_blob ~sw ~data_dir ~db ~headers hash_with_ext =
           Ok (Http_response.Error_range_not_satisfiable { total = metadata.size })
       | Range.Satisfiable range ->
           let* body =
-            of_domain (BlobService.get_range ~sw ~storage:data_dir ~db ~sha256:hash
+            of_domain (BlobService.get_range ~sw ~abort_on_stall ~storage:data_dir ~db ~sha256:hash
                          ~offset:range.start ~length:(Range.length range))
           in
           Ok (Http_response.Success_blob_range {
@@ -423,7 +423,11 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
        | [] ->
            (* BUD-09: GET / returns server's terms of service *)
            Http_response.Success_terms_of_service terms_of_service
-       | [hash_with_ext] -> handle_get_blob ~sw:conn_sw ~data_dir ~db ~headers hash_with_ext
+       | [hash_with_ext] ->
+           (* 停止時の接続打ち切りは HTTP/1.x のみ（HTTP/2 は接続を複数の
+              ストリームで共有し、フロー制御による一時停止も正当なため） *)
+           let abort_on_stall = request.version <> Versions.HTTP.HTTP_2 in
+           handle_get_blob ~sw:conn_sw ~abort_on_stall ~data_dir ~db ~headers hash_with_ext
        | ["list"; pubkey] -> handle_list ~clock ~data_dir ~db ~base_url ~headers ~uri pubkey
        | _ -> Http_response.Error_not_found "Invalid path")
 
