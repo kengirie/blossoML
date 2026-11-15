@@ -18,7 +18,7 @@ let with_conn ~multiplexed f =
 
 let register conn label =
   let stalled = ref false in
-  match G.watch_response conn ~label ~on_stall:(fun () -> stalled := true) with
+  match G.watch_response conn ~label ~on_idle:(fun () -> stalled := true) with
   | Ok progress -> progress, stalled
   | Error e -> failf "registration rejected: %s" e
 
@@ -46,14 +46,22 @@ let test_http1_stalled_closes () =
   check bool "file released" true !flag
 
 let test_http1_active_kept () =
+  (* 取りに来る間隔が [stall_timeout] 未満なら、開いて閉じてを繰り返しても接続は切らない *)
+  let r = with_conn ~multiplexed:false (fun ~clock conn ->
+    let p, _ = register conn "a" in
+    keep_taking clock p ~every:(G.stall_timeout /. 2.) ~total:(G.stall_timeout *. 4.);
+    p.finished ()) in
+  check outcome "connection kept" (`Ok ()) r
+
+let test_frequent_takes_keep_file () =
   let flag = ref true in
   let r = with_conn ~multiplexed:false (fun ~clock conn ->
-    let p, stalled = register conn "a" in
-    keep_taking clock p ~every:(G.stall_timeout /. 2.) ~total:(G.stall_timeout *. 4.);
-    p.finished ();
-    flag := !stalled) in
+    let p, idle_closed = register conn "a" in
+    keep_taking clock p ~every:(G.file_idle_timeout /. 2.) ~total:(G.stall_timeout *. 2.);
+    flag := !idle_closed;
+    p.finished ()) in
   check outcome "connection kept" (`Ok ()) r;
-  check bool "not stalled" false !flag
+  check bool "file never closed" false !flag
 
 let test_idle_after_finish_kept () =
   let r = with_conn ~multiplexed:false (fun ~clock conn ->
@@ -137,12 +145,12 @@ let test_h2_paused_with_long_request_kept () =
 let test_per_connection_limit () =
   let r = with_conn ~multiplexed:true (fun ~clock:_ conn ->
     let ps = List.init G.max_active_per_connection (fun i -> fst (register conn (string_of_int i))) in
-    (match G.watch_response conn ~label:"over" ~on_stall:ignore with
+    (match G.watch_response conn ~label:"over" ~on_idle:ignore with
      | Ok _ -> fail "expected rejection over the per-connection limit"
      | Error _ -> ());
     (* 1件終われば受け付ける *)
     (List.hd ps).finished ();
-    (match G.watch_response conn ~label:"again" ~on_stall:ignore with
+    (match G.watch_response conn ~label:"again" ~on_idle:ignore with
      | Ok p -> p.finished ()
      | Error e -> failf "expected acceptance after a slot freed: %s" e);
     List.iter (fun (p : Blossom_shell.Storage_intf.progress) -> p.finished ()) ps) in
@@ -162,7 +170,7 @@ let test_global_open_files_limit () =
         for j = 1 to G.max_active_per_connection do ignore (register c (string_of_int j)) done
       done;
       check int "open files at the limit" G.max_open_files !G.open_files;
-      match G.watch_response (conn n_conns) ~label:"over" ~on_stall:ignore with
+      match G.watch_response (conn n_conns) ~label:"over" ~on_idle:ignore with
       | Ok _ -> `Accepted
       | Error _ -> `Rejected)) in
   check bool "rejected at the global limit" true (r = `Rejected);
@@ -183,9 +191,27 @@ let test_resume_after_stall () =
   check outcome "connection kept" (`Ok ()) r;
   check int "open file count restored" 0 !G.open_files
 
+let test_idle_file_released_connection_kept () =
+  let r = with_conn ~multiplexed:false (fun ~clock conn ->
+    let p, released = register conn "a" in
+    check int "holds a file" 1 !G.open_files;
+    (* 短い中断: ファイルは閉じるが、接続は切らない *)
+    sleep clock (G.file_idle_timeout +. G.check_interval +. 1.);
+    check bool "file closed after idle period" true !released;
+    check int "slot returned" 0 !G.open_files;
+    (* 再開すると開き直す *)
+    check bool "resume allowed" true (p.resume ());
+    p.taken ();
+    check int "slot reacquired" 1 !G.open_files;
+    keep_taking clock p ~every:5. ~total:30.;
+    p.finished ()) in
+  check outcome "connection kept" (`Ok ()) r;
+  check int "open file count restored" 0 !G.open_files
+
 let tests = [
   test_case "HTTP/1: stalled response closes connection" `Quick test_http1_stalled_closes;
   test_case "HTTP/1: steadily progressing response kept" `Quick test_http1_active_kept;
+  test_case "frequent takes keep the file open" `Quick test_frequent_takes_keep_file;
   test_case "idle keep-alive after finished response kept" `Quick test_idle_after_finish_kept;
   test_case "watcher stops when no active responses" `Quick test_watcher_stops_when_idle;
   test_case "HTTP/2: one paused stream, others active -> kept" `Quick test_h2_one_paused_others_active_kept;
@@ -198,4 +224,5 @@ let tests = [
   test_case "per-connection download limit" `Quick test_per_connection_limit;
   test_case "global open file limit" `Quick test_global_open_files_limit;
   test_case "resume after stall reacquires the file" `Quick test_resume_after_stall;
+  test_case "idle file released without closing connection" `Quick test_idle_file_released_connection_kept;
 ]

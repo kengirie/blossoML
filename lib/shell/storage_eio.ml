@@ -164,8 +164,8 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
       | exn -> Domain.Storage_error (Printexc.to_string exn)
     in
     (* 停止監視に登録（同時配信数の上限を超える場合はファイルを開かずに拒否）。
-       停止と判断されたらファイルを閉じる（[Stall_guard] を参照） *)
-    match watch ~on_stall:close_file with
+       しばらく取りに来られなければファイルを閉じる（[Stall_guard] を参照） *)
+    match watch ~on_idle:close_file with
     | Error reason -> Error (Domain.Service_unavailable reason)
     | Ok (progress : Storage_intf.progress) ->
         match open_file () with
@@ -189,7 +189,7 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
               progress.taken ();
               if !remaining <= 0 then (finish ~complete:true; None)
               else begin
-                (* 停止と判断されてファイルを閉じた後に再開された場合は開き直す *)
+                (* 取りに来られずファイルを閉じた後に再開された場合は開き直す *)
                 (match !file with
                  | Some _ -> ()
                  | None ->
@@ -197,7 +197,7 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
                        (try open_file () with exn ->
                           Eio.traceln "Failed to reopen %s: %s" path (Printexc.to_string exn)));
                 match !file with
-                | None -> ended_early "file could not be reopened after a stall"
+                | None -> ended_early "file could not be reopened after an idle period"
                 | Some f ->
                     let buf = Cstruct.create (min chunk_size !remaining) in
                     match Eio.File.pread f ~file_offset:(Optint.Int63.of_int !pos) [buf] with

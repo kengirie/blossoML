@@ -14,16 +14,16 @@ type progress = {
   taken : unit -> unit;      (** 送信側が次のチャンクを取りに来た *)
   finished : unit -> unit;   (** 配信が終わった（完了・開始失敗） *)
   truncated : unit -> unit;  (** 配信が予定より早く終わった（読み込みエラー等） *)
-  resume : unit -> bool;     (** 停止で資源を解放した後に再開してよいか（false なら中止） *)
+  resume : unit -> bool;     (** [on_idle] でファイルを閉じた後に開き直してよいか（false なら中止） *)
 }
 
-(** 配信1件を監視対象に登録する。[on_stall] は監視側が停止と判断したときに
-    呼ばれ、実装はファイルを閉じるなど配信の資源を解放する。
-    同時配信数の上限などで受け付けられない場合は [Error 理由] *)
-type watch = on_stall:(unit -> unit) -> (progress, string) result
+(** 配信1件を監視対象に登録する。[on_idle] は送信側がしばらく次のチャンクを
+    取りに来ないときに呼ばれ、実装はファイルを閉じる（再開時は [resume] を
+    確認して開き直す）。同時配信数の上限などで受け付けられない場合は [Error 理由] *)
+type watch = on_idle:(unit -> unit) -> (progress, string) result
 
 (** 監視しない場合の [watch]（テスト用など） *)
-let no_watch : watch = fun ~on_stall:_ ->
+let no_watch : watch = fun ~on_idle:_ ->
   Ok { taken = ignore; finished = ignore; truncated = ignore; resume = (fun () -> true) }
 
 (** ファイルシステム操作 *)

@@ -6,9 +6,12 @@
     リセットや接続断で同じことが起きる。
 
     送信側は書き込み完了を待ってから次のチャンクを取りに来るので、
-    「応答が終わっていないのに一定時間取りに来ない」配信を停止とみなす。
+    次のチャンクが取りに来られない時間で配信の状態を判断する。
 
-    - 停止した配信はファイルを閉じる（[on_stall]）。再開されたら開き直す
+    - [file_idle_timeout] 秒取りに来ない配信はファイルを閉じてスロットを返す
+      （[on_idle]）。次に取りに来たら開き直す。切断済み・一時停止中・
+      リセット済みの配信がファイルを長く握り続けないようにするため
+    - [stall_timeout] 秒取りに来ない配信は「停止」とみなし、次の条件で接続を切る
     - HTTP/1.x: 1接続に配信は1つなので、停止したら接続を切る
     - HTTP/2: 1接続を複数のストリームが共有し、フロー制御による一時停止も
       正当な動作なので、次のいずれかの場合だけ接続を切る
@@ -35,14 +38,19 @@ exception Response_truncated of string
     取りに来る間隔は数十秒に開くため、死んだ接続の回収に十分な範囲で長めに取る *)
 let stall_timeout = 120.0
 
+(** 取りに来ない配信のファイルを閉じるまでの秒数（再開時は開き直す） *)
+let file_idle_timeout = 15.0
+
 (** 監視の間隔（秒） *)
 let check_interval = 5.0
 
 (** HTTP/2 で、他のストリームが動いていても接続を切る停止ストリーム数 *)
 let max_stalled_streams = 8
 
-(** 1接続あたりの未完了の配信数の上限 *)
-let max_active_per_connection = 32
+(** 1接続あたりの未完了の配信数の上限。HTTP/2 クライアントは1接続で
+    100本程度のストリームを多重化するため、それを下回らない値にする
+    （Piaf は SETTINGS_MAX_CONCURRENT_STREAMS の設定を公開していない） *)
+let max_active_per_connection = 128
 
 (** サーバー全体で同時に開いておく配信ファイル数の上限 *)
 let max_open_files = 512
@@ -55,7 +63,7 @@ type entry = {
   mutable finished : bool;
   mutable stalled : bool;
   mutable holding : bool;  (** 配信ファイルを開いている（[open_files] に計上済み） *)
-  on_stall : unit -> unit;
+  on_idle : unit -> unit;  (** ファイルを閉じる *)
 }
 
 type conn = {
@@ -87,11 +95,14 @@ let check conn =
   if conn.entries = [] then `Stop
   else begin
     List.iter (fun e ->
-      if not e.stalled && seconds_since conn e.last_take >= stall_timeout then begin
-        e.stalled <- true;
+      let idle = seconds_since conn e.last_take in
+      if e.holding && idle >= file_idle_timeout then begin
         release e;
-        Eio.traceln "Client stalled for %.0fs while streaming %s" stall_timeout e.label;
-        e.on_stall ()
+        e.on_idle ()
+      end;
+      if not e.stalled && idle >= stall_timeout then begin
+        e.stalled <- true;
+        Eio.traceln "Client stalled for %.0fs while streaming %s" stall_timeout e.label
       end
     ) conn.entries;
     let total = List.length conn.entries in
@@ -159,7 +170,7 @@ let with_request conn f =
 
 (** 配信1件を監視対象に登録する [Storage_intf.watch] を作る。
     同時配信数の上限を超える場合は登録せずに [Error] を返す *)
-let watch_response conn ~label : Storage_intf.watch = fun ~on_stall ->
+let watch_response conn ~label : Storage_intf.watch = fun ~on_idle ->
   if List.length (List.filter (fun e -> not e.finished) conn.entries)
      >= max_active_per_connection then
     Error "Too many concurrent downloads on this connection"
@@ -172,7 +183,7 @@ let watch_response conn ~label : Storage_intf.watch = fun ~on_stall ->
       finished = false;
       stalled = false;
       holding = false;
-      on_stall;
+      on_idle;
     } in
     acquire e;
     conn.entries <- e :: conn.entries;
@@ -197,6 +208,7 @@ let watch_response conn ~label : Storage_intf.watch = fun ~on_stall ->
         else begin
           acquire e;
           e.stalled <- false;
+          e.last_take <- now conn;
           true
         end);
     }
