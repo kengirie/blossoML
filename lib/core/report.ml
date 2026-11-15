@@ -92,6 +92,9 @@ let extract_entries (event : Nostr_event.t) : (entry list, Domain.error) result 
   let* entries = collect [] event.tags in
   if entries = [] then
     Error (Domain.Report_error "Report event must contain at least one x tag")
+  else if List.length entries > Policy.max_report_entries then
+    Error (Domain.Report_error
+      (Printf.sprintf "Too many x tags (max %d)" Policy.max_report_entries))
   else
     Ok entries
 

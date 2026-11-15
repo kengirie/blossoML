@@ -22,7 +22,9 @@ module type S = sig
     max_size:int ->
     (save_result, Domain.error) result
 
-  (** ストリーミングでファイルを取得する *)
+  (** ストリーミングでファイルを取得する。
+      [sw] には接続ごとのスイッチを渡すこと。クライアントが一定時間応答を
+      受け取らない場合、実装は [sw] を失敗させて接続を打ち切ることがある *)
   val get :
     sw:Eio.Switch.t ->
     t ->

@@ -72,6 +72,25 @@ module Db = struct
       CREATE INDEX IF NOT EXISTS blob_reports_sha256 ON blob_reports(sha256)
     |sql}
 
+  (* レポートイベント本体（生JSON等）を1イベント1行で保持する。
+     blob_reports は (event_id, sha256) ごとの対応のみを持ち、
+     content / raw_event_json は空文字で保存する（x タグ数に比例した
+     重複保存を避けるため）。過去の行は従来どおり blob_reports 側に本文を持つ *)
+  let create_report_events_table =
+    static T.(unit -->. unit)
+    {sql|
+      CREATE TABLE IF NOT EXISTS report_events (
+        event_id TEXT(64) PRIMARY KEY,
+        reporter_pubkey TEXT(64) NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        e_tag TEXT,
+        p_tag TEXT,
+        raw_event_json TEXT NOT NULL,
+        event_created_at INTEGER NOT NULL,
+        received_at INTEGER NOT NULL
+      )
+    |sql}
+
   let save_blob =
     static T.(t3 string (option string) (option int64) -->. unit)
     {sql|
@@ -80,15 +99,27 @@ module Db = struct
       ON CONFLICT(sha256) DO UPDATE SET status = 'stored', uploaded_at = strftime('%s', 'now')
     |sql}
 
-  let insert_report =
+  let insert_report_event =
     static
-      T.(t10 string string string string string (option string) (option string)
+      T.(t8 string string string (option string) (option string)
            string int64 int64 -->. unit)
+    {sql|
+      INSERT INTO report_events
+        (event_id, reporter_pubkey, content, e_tag, p_tag,
+         raw_event_json, event_created_at, received_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT(event_id) DO NOTHING
+    |sql}
+
+  let insert_report_entry =
+    static
+      T.(t8 string string string string (option string) (option string)
+           int64 int64 -->. unit)
     {sql|
       INSERT INTO blob_reports
         (event_id, sha256, reporter_pubkey, report_type, content,
          e_tag, p_tag, raw_event_json, event_created_at, received_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, '', $5, $6, '', $7, $8)
       ON CONFLICT(event_id, sha256) DO NOTHING
     |sql}
 
@@ -178,7 +209,8 @@ let init ~env ~sw ~dir =
           Result.bind (C.exec Db.create_blob_owners_sha256_index ()) @@ fun () ->
           Result.bind (C.exec Db.create_blob_owners_pubkey_index ()) @@ fun () ->
           Result.bind (C.exec Db.create_blob_reports_table ()) @@ fun () ->
-          C.exec Db.create_blob_reports_sha256_index ()
+          Result.bind (C.exec Db.create_blob_reports_sha256_index ()) @@ fun () ->
+          C.exec Db.create_report_events_table ()
         ) pool
       in
       match init_result with
@@ -299,13 +331,24 @@ let list_by_pubkey pool ~pubkey ~since ~until ~cursor ~limit =
       Ok descriptors
   | Error e -> Error (Domain.Storage_error (Caqti.Error.show e))
 
-let save_report pool ~event_id ~sha256 ~reporter_pubkey ~report_type
-    ~content ~e_tag ~p_tag ~raw_event_json ~event_created_at ~received_at =
+let save_report pool ~(report : Report.t) ~received_at =
   let result =
     Caqti_eio.Pool.use (fun (module C : Caqti_eio.CONNECTION) ->
-      C.exec Db.insert_report
-        (event_id, sha256, reporter_pubkey, report_type, content,
-         e_tag, p_tag, raw_event_json, event_created_at, received_at)
+      C.with_transaction (fun () ->
+        let open Syntax in
+        let* () =
+          C.exec Db.insert_report_event
+            (report.event_id, report.reporter_pubkey, report.content,
+             report.e_tag, report.p_tag, report.raw_event_json,
+             report.created_at, received_at)
+        in
+        List.fold_left (fun acc (entry : Report.entry) ->
+          let* () = acc in
+          C.exec Db.insert_report_entry
+            (report.event_id, entry.sha256, report.reporter_pubkey,
+             Report.report_type_to_string entry.report_type,
+             report.e_tag, report.p_tag, report.created_at, received_at)
+        ) (Ok ()) report.entries)
     ) pool
   in
   match result with

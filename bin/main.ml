@@ -47,9 +47,8 @@ let run_server cert key port host base_url =
                 Printf.sprintf "%s://localhost:%d" scheme port
           in
           Eio.traceln "Starting Blossom server on %s:%d (base URL: %s)" host port effective_base_url;
-          Blossom_shell.Http_server.start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url:effective_base_url ?cert ?key ();
-          (* Keep the server running *)
-          Eio.Fiber.await_cancel ()
+          (* サーバーを起動（停止されるまで戻らない） *)
+          Blossom_shell.Http_server.start ~sw ~env ~port ~host ~clock ~data_dir ~db ~base_url:effective_base_url ?cert ?key ()
     )
   )
 

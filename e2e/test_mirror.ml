@@ -378,11 +378,33 @@ let test_mirror_ssrf_bracketed_scoped_ipv6 ~sw ~env =
   | Error e -> failwith ("Request failed unexpectedly: " ^ e)
   | Ok response -> assert_ssrf_blocked response "bracketed scoped IPv6"
 
+(** Test: Mirror with a request body larger than the limit should fail with 413 *)
+let test_mirror_oversized_body ~sw ~env =
+  let base_url = Config.base_url in
+  let clock = Eio.Stdenv.clock env in
+  let now = Eio.Time.now clock in
+  let keypair = Nostr_signer.generate_keypair () in
+  let sha256 = String.make 64 '0' in
+  let expiration = Int64.of_float (now +. 3600.) in
+  let auth_event = Nostr_signer.create_upload_auth ~keypair ~sha256 ~created_at:now ~expiration in
+  let auth_header = Nostr_signer.to_auth_header auth_event in
+  let body = String.make (Blossom_core.Policy.max_mirror_body_size + 1) ' ' in
+  let result = Http_client.put ~sw ~env ~url:(base_url ^ "/mirror")
+    ~headers:[("Authorization", auth_header); ("Content-Type", "application/json")]
+    ~body ()
+  in
+  match result with
+  | Error e -> failwith ("Request failed unexpectedly: " ^ e)
+  | Ok response ->
+    if response.status <> 413 then
+      failwith (Printf.sprintf "Expected 413 for oversized body, got %d" response.status)
+
 (** All tests *)
 let tests = [
   ("mirror basic", test_mirror_basic);
   ("mirror without auth", test_mirror_without_auth);
   ("mirror invalid JSON", test_mirror_invalid_json);
+  ("mirror oversized body", test_mirror_oversized_body);
   ("mirror missing url", test_mirror_missing_url);
   ("mirror invalid URL scheme", test_mirror_invalid_url_scheme);
   ("mirror sha256 mismatch", test_mirror_sha256_mismatch);

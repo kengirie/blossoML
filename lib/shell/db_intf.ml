@@ -74,19 +74,12 @@ module type S = sig
     limit:int ->
     (Domain.blob_descriptor list, Domain.error) result
 
-  (** BUD-09: NIP-56 レポートを1件保存する。
-      同じ (event_id, sha256) 組は重複保存しない。 *)
+  (** BUD-09: NIP-56 レポートイベントを保存する（1トランザクション）。
+      イベント本体（生JSON）は1回だけ保存し、x タグごとの (event_id, sha256)
+      対応を別に保存する。同じイベント・同じ組は重複保存しない。 *)
   val save_report :
     t ->
-    event_id:string ->
-    sha256:string ->
-    reporter_pubkey:string ->
-    report_type:string ->
-    content:string ->
-    e_tag:string option ->
-    p_tag:string option ->
-    raw_event_json:string ->
-    event_created_at:int64 ->
+    report:Report.t ->
     received_at:int64 ->
     (unit, Domain.error) result
 end

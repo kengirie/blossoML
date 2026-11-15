@@ -148,39 +148,12 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
                     (try Eio.Path.unlink temp_path with _ -> ());
                     Error (Domain.Storage_error (Printexc.to_string exn)))
 
-  let get ~sw dir ~path ~size =
-    let chunk_size = 16384 in (* 16KB chunks *)
-    let full_path = Eio.Path.(dir / path) in
-    (* ファイルを開く（エラーを早期に検出） *)
-    try
-      let file = Eio.Path.open_in ~sw full_path in
-      let stream, push = Piaf.Stream.create 2 in
-      (* 別ファイバーでファイルを読み込みながらストリームにプッシュ *)
-      Eio.Fiber.fork ~sw (fun () ->
-        Fun.protect ~finally:(fun () -> Eio.Flow.close file) (fun () ->
-          let rec read_loop remaining =
-            if remaining <= 0 then
-              push None (* ストリーム終了 *)
-            else
-              let to_read = min chunk_size remaining in
-              let buf = Cstruct.create to_read in
-              match Eio.Flow.single_read file buf with
-              | 0 -> push None
-              | n ->
-                  push (Some (Cstruct.to_string ~len:n buf));
-                  read_loop (remaining - n)
-          in
-          read_loop size
-        )
-      );
-      Ok (Piaf.Body.of_string_stream ~length:(`Fixed (Int64.of_int size)) stream)
-    with
-    | Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
-        Error (Domain.Blob_not_found path)
-    | Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) ->
-        Error (Domain.Storage_error "Permission denied")
-    | exn ->
-        Error (Domain.Storage_error (Printexc.to_string exn))
+  (** クライアントが応答を受け取らなくなったことを示す例外 *)
+  exception Client_stalled of string
+
+  (** 送信待ちのチャンクが受け取られないまま経過してよい最大秒数。
+      これを超えたら接続を打ち切る *)
+  let stall_timeout = 30.0
 
   let get_range ~sw dir ~path ~offset ~length =
     let chunk_size = 16384 in (* 16KB chunks *)
@@ -189,6 +162,18 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
     try
       let file = Eio.Path.open_in ~sw full_path in
       let stream, push = Piaf.Stream.create 2 in
+      (* 送信キューへの追加。[stall_timeout] 秒以内に受け取られなければ false。
+
+         クライアントが応答の途中で切断すると、Piaf 0.2.0 / httpun 0.2.0 では
+         本文送信側が書き込み完了を永久に待ち続け、接続（ソケット）が解放されない。
+         そのため受け取りが止まったら接続スイッチ [sw] を失敗させ、止まった
+         ファイバーごと接続を片付ける（Piaf は接続ごとのスイッチの失敗を
+         ログに記録して他の接続の処理を続ける） *)
+      let push_or_stall item =
+        Eio.Fiber.first
+          (fun () -> push item; true)
+          (fun () -> Eio_unix.sleep stall_timeout; false)
+      in
       (* 別ファイバーでoffsetからpreadしながらストリームにプッシュ
          （offsetより前のバイトはディスクから読まない） *)
       Eio.Fiber.fork ~sw (fun () ->
@@ -202,8 +187,13 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
               match Eio.File.pread file ~file_offset:(Optint.Int63.of_int pos) [buf] with
               | 0 -> push None
               | n ->
-                  push (Some (Cstruct.to_string ~len:n buf));
-                  read_loop (pos + n) (remaining - n)
+                  if push_or_stall (Some (Cstruct.to_string ~len:n buf)) then
+                    read_loop (pos + n) (remaining - n)
+                  else begin
+                    Eio.traceln "Client stalled for %.0fs while streaming %s, closing connection"
+                      stall_timeout path;
+                    Eio.Switch.fail sw (Client_stalled path)
+                  end
               | exception End_of_file -> push None
           in
           read_loop offset length
@@ -217,6 +207,9 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
         Error (Domain.Storage_error "Permission denied")
     | exn ->
         Error (Domain.Storage_error (Printexc.to_string exn))
+
+  let get ~sw dir ~path ~size =
+    get_range ~sw dir ~path ~offset:0 ~length:size
 
   let exists dir ~path =
     let full_path = Eio.Path.(dir / path) in
