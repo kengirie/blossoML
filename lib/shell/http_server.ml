@@ -106,12 +106,12 @@ otherwise interacting with this server you agree to the following:
     policy.max_size
 
 (** GET /<sha256>: Blob取得（BUD-01、Rangeリクエスト対応） *)
-let handle_get_blob ~sw ~abort_on_stall ~data_dir ~db ~headers hash_with_ext =
+let handle_get_blob ~sw ~watch ~data_dir ~db ~headers hash_with_ext =
   to_response @@
   let* hash = hash_of_path_part hash_with_ext in
   (* Blob全体をストリーミングで返すヘルパー *)
   let serve_full () =
-    let* (body, metadata) = of_domain (BlobService.get ~sw ~abort_on_stall ~storage:data_dir ~db ~sha256:hash) in
+    let* (body, metadata) = of_domain (BlobService.get ~sw ~watch ~storage:data_dir ~db ~sha256:hash) in
     Ok (Http_response.Success_blob_stream {
       body;
       mime_type = metadata.mime_type;
@@ -131,7 +131,7 @@ let handle_get_blob ~sw ~abort_on_stall ~data_dir ~db ~headers hash_with_ext =
           Ok (Http_response.Error_range_not_satisfiable { total = metadata.size })
       | Range.Satisfiable range ->
           let* body =
-            of_domain (BlobService.get_range ~sw ~abort_on_stall ~storage:data_dir ~db ~sha256:hash
+            of_domain (BlobService.get_range ~sw ~watch ~storage:data_dir ~db ~sha256:hash
                          ~offset:range.start ~length:(Range.length range))
           in
           Ok (Http_response.Success_blob_range {
@@ -405,10 +405,11 @@ let handle_mirror ~sw ~env ~clock ~data_dir ~db ~base_url ~headers ~body =
     [sw] はサーバー全体の寿命を持つスイッチ、[ctx.sw] は接続ごとのスイッチ。
     blob のストリーミング配信は接続ごとのスイッチに紐付け、クライアントが
     応答を受け取らなくなった場合にその接続だけを打ち切れるようにする
-    （[Storage_eio.Impl.get_range] を参照） *)
+    （[Stall_guard] を参照） *)
 let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
-    { Server.Handler.request; ctx = { Request_info.sw = conn_sw; _ } } =
+    { Server.Handler.request; ctx = { Request_info.sw = conn_sw; client_address; _ } } =
   Eio.traceln "Request: %s %s" (Method.to_string request.meth) request.target;
+  let mono_clock = (Eio.Stdenv.mono_clock env :> Stall_guard.mono_clock) in
   let headers = request.headers in
 
   let response_kind = match request.meth, request.target with
@@ -424,10 +425,15 @@ let request_handler ~sw ~env ~clock ~data_dir ~db ~base_url
            (* BUD-09: GET / returns server's terms of service *)
            Http_response.Success_terms_of_service terms_of_service
        | [hash_with_ext] ->
-           (* 停止時の接続打ち切りは HTTP/1.x のみ（HTTP/2 は接続を複数の
-              ストリームで共有し、フロー制御による一時停止も正当なため） *)
-           let abort_on_stall = request.version <> Versions.HTTP.HTTP_2 in
-           handle_get_blob ~sw:conn_sw ~abort_on_stall ~data_dir ~db ~headers hash_with_ext
+           (* 配信の停止監視（[Stall_guard] を参照） *)
+           let watch =
+             let conn =
+               Stall_guard.for_connection ~sw:conn_sw ~clock:mono_clock ~client_address
+                 ~multiplexed:(request.version = Versions.HTTP.HTTP_2)
+             in
+             Stall_guard.watch_response conn ~label:hash_with_ext
+           in
+           handle_get_blob ~sw:conn_sw ~watch ~data_dir ~db ~headers hash_with_ext
        | ["list"; pubkey] -> handle_list ~clock ~data_dir ~db ~base_url ~headers ~uri pubkey
        | _ -> Http_response.Error_not_found "Invalid path")
 

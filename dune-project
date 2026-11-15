@@ -34,6 +34,7 @@
   yojson
   base64
   secp256k1
+  mtime
   (caqti
    (>= "3.0.0"))
   (caqti-driver-sqlite3

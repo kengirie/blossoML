@@ -9,6 +9,21 @@ type save_result = {
   first_chunk: string option;
 }
 
+(** ストリーミング配信の進捗通知（停止監視用、[Stall_guard] を参照） *)
+type progress = {
+  taken : unit -> unit;      (** 送信側が次のチャンクを取りに来た *)
+  finished : unit -> unit;   (** 配信が予定どおり完了した *)
+  truncated : unit -> unit;  (** 配信が予定より早く終わった（読み込みエラー等） *)
+}
+
+(** 配信1件を監視対象に登録する。[on_stall] は監視側が停止と判断したときに
+    呼ばれ、実装はファイルを閉じるなど配信の資源を解放する *)
+type watch = on_stall:(unit -> unit) -> progress
+
+(** 監視しない場合の [watch]（テスト用など） *)
+let no_watch : watch = fun ~on_stall:_ ->
+  { taken = ignore; finished = ignore; truncated = ignore }
+
 (** ファイルシステム操作 *)
 module type S = sig
   (** ファイルシステム操作のコンテキスト（Eio.Path.tなど） *)
@@ -23,12 +38,10 @@ module type S = sig
     (save_result, Domain.error) result
 
   (** ストリーミングでファイルを取得する。
-      [sw] には接続ごとのスイッチを渡すこと。
-      [abort_on_stall] が true の場合、応答の途中でクライアントが
-      一定時間受け取らなくなると、実装は [sw] を失敗させて接続を打ち切る *)
+      [sw] には接続ごとのスイッチを渡すこと。[watch] で配信の進捗を通知する *)
   val get :
     sw:Eio.Switch.t ->
-    abort_on_stall:bool ->
+    watch:watch ->
     t ->
     path:string ->
     size:int ->
@@ -39,7 +52,7 @@ module type S = sig
       length: 読み込むバイト数 *)
   val get_range :
     sw:Eio.Switch.t ->
-    abort_on_stall:bool ->
+    watch:watch ->
     t ->
     path:string ->
     offset:int ->

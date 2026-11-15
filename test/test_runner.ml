@@ -14,4 +14,5 @@ let () =
     "Report", Test_report.tests;
     "Range", Test_range.tests;
     "Request_body", Test_request_body.tests;
+    "Stall_guard", Test_stall_guard.tests;
   ]

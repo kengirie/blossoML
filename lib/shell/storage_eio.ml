@@ -148,79 +148,53 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
                     (try Eio.Path.unlink temp_path with _ -> ());
                     Error (Domain.Storage_error (Printexc.to_string exn)))
 
-  (** クライアントが応答を受け取らなくなったことを示す例外 *)
-  exception Client_stalled of string
-
-  (** 応答の途中で、次のチャンクが取りに来られないまま経過してよい最大秒数。
-      これを超えたら接続を打ち切る *)
-  let stall_timeout = 30.0
-
-  let get_range ~sw ~abort_on_stall dir ~path ~offset ~length =
+  let get_range ~sw ~watch dir ~path ~offset ~length =
     let chunk_size = 16384 in (* 16KB chunks *)
     let full_path = Eio.Path.(dir / path) in
     (* ファイルを開く（エラーを早期に検出） *)
     try
       let file = Eio.Path.open_in ~sw full_path in
       let pos = ref offset and remaining = ref length in
-      let finished = ref false in
-      (* 送信側（Piaf）が最後に次のチャンクを取りに来た時刻 *)
-      let last_take = ref (Unix.gettimeofday ()) in
-      let finish () =
-        if not !finished then begin
-          finished := true;
+      let closed = ref false in
+      let close_file () =
+        if not !closed then begin
+          closed := true;
           (try Eio.Flow.close file with _ -> ())
         end
+      in
+      (* 停止監視に登録。停止と判断されたらファイルを閉じる（[Stall_guard] を参照） *)
+      let progress : Storage_intf.progress = watch ~on_stall:close_file in
+      let finish ~complete =
+        close_file ();
+        if complete then progress.finished () else progress.truncated ()
       in
       (* 送信側が次のチャンクを要求したときにだけ offset から pread する
          （offset より前のバイトはディスクから読まない） *)
       let next_chunk () =
-        last_take := Unix.gettimeofday ();
-        if !finished then None
-        else if !remaining <= 0 then (finish (); None)
+        progress.taken ();
+        if !remaining <= 0 then (finish ~complete:true; None)
+        else if !closed then
+          (* 停止と判断されてファイルを閉じた後に再開された *)
+          (finish ~complete:false; None)
         else
           let buf = Cstruct.create (min chunk_size !remaining) in
           match Eio.File.pread file ~file_offset:(Optint.Int63.of_int !pos) [buf] with
-          | 0 -> finish (); None
-          | n ->
+          | n when n > 0 ->
               pos := !pos + n;
               remaining := !remaining - n;
               Some (Cstruct.to_string ~len:n buf)
-          | exception End_of_file -> finish (); None
-          | exception (Eio.Cancel.Cancelled _ as exn) -> finish (); raise exn
+          | _ | exception End_of_file ->
+              Eio.traceln "Unexpected end of file while streaming %s" path;
+              finish ~complete:false;
+              None
+          | exception (Eio.Cancel.Cancelled _ as exn) ->
+              close_file ();
+              raise exn
           | exception exn ->
               Eio.traceln "Read error while streaming %s: %s" path (Printexc.to_string exn);
-              finish ();
+              finish ~complete:false;
               None
       in
-      (* 停止の監視（HTTP/1.x のみ）。
-
-         クライアントが応答の途中で切断する・読まなくなると、Piaf 0.2.0 /
-         httpun 0.2.0 では本文送信側が書き込み完了を永久に待ち続け、接続
-         （ソケット）が解放されない。送信側は書き込み完了を待ってから次の
-         チャンクを取りに来るので、応答が終わっていないのに [stall_timeout] 秒
-         取りに来なければ止まっていると判断し、接続スイッチ [sw] を失敗させて
-         止まったファイバーごと接続を片付ける（Piaf は接続ごとのスイッチの失敗を
-         ログに記録して他の接続の処理を続ける）。
-
-         HTTP/2 では1つの接続を複数のストリームが共有し、フロー制御による
-         一時停止も正当な動作なので、呼び出し側で無効にする *)
-      if abort_on_stall then
-        Eio.Fiber.fork_daemon ~sw (fun () ->
-          let rec watch () =
-            if !finished then `Stop_daemon
-            else
-              let idle = Unix.gettimeofday () -. !last_take in
-              if idle >= stall_timeout then begin
-                Eio.traceln "Client stalled for %.0fs while streaming %s, closing connection"
-                  stall_timeout path;
-                Eio.Switch.fail sw (Client_stalled path);
-                `Stop_daemon
-              end else begin
-                Eio_unix.sleep (stall_timeout -. idle);
-                watch ()
-              end
-          in
-          watch ());
       Ok (Piaf.Body.of_string_stream ~length:(`Fixed (Int64.of_int length))
             (Piaf.Stream.from ~f:next_chunk))
     with
@@ -231,8 +205,8 @@ module Impl : Storage_intf.S with type t = Eio.Fs.dir_ty Eio.Path.t = struct
     | exn ->
         Error (Domain.Storage_error (Printexc.to_string exn))
 
-  let get ~sw ~abort_on_stall dir ~path ~size =
-    get_range ~sw ~abort_on_stall dir ~path ~offset:0 ~length:size
+  let get ~sw ~watch dir ~path ~size =
+    get_range ~sw ~watch dir ~path ~offset:0 ~length:size
 
   let exists dir ~path =
     let full_path = Eio.Path.(dir / path) in
